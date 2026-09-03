@@ -37,7 +37,10 @@ class LocalCodeAggregator:
 
         Блоки ``--- FILE: <path> --- ... --- END FILE ---`` соединены пустой строкой.
         """
-        relative_paths = self._collect_files(repo_path)
+        try:
+            relative_paths = self._collect_files(repo_path)
+        except OSError as exc:
+            raise CodeAggregationError(f"Не удалось перечислить файлы репозитория: {exc}") from exc
         if not relative_paths:
             raise CodeAggregationError("no supported source files")
         contents = await asyncio.gather(*(self._read_file(repo_path / rel) for rel in relative_paths))

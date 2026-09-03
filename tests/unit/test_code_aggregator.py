@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import types
 from pathlib import Path
 
@@ -120,3 +121,40 @@ async def test_reads_limited_by_semaphore_of_20(monkeypatch: pytest.MonkeyPatch,
 
     assert peak == 20
     assert all(f"--- FILE: f{index:02d}.py ---" in result for index in range(30))
+
+
+async def test_non_utf8_file_skipped_with_warning(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """FR-013: не-UTF8 (бинарный) файл с поддерживаемым расширением — пропуск с warning, без срыва."""
+    write(tmp_path, "ok.py", "print('hi')")
+    (tmp_path / "binary.py").write_bytes(b"\xff\xfe\x00\x01\x89PNG not-utf8")
+
+    with caplog.at_level(logging.WARNING, logger="ai_detector.code_aggregator"):
+        result = await LocalCodeAggregator().aggregate(tmp_path)
+
+    assert "--- FILE: ok.py ---" in result
+    assert "binary.py" not in result
+    assert any("не является текстом UTF-8" in record.message for record in caplog.records)
+
+
+async def test_only_non_utf8_files_raises_code_aggregation_error(tmp_path: Path) -> None:
+    """Все поддерживаемые файлы бинарные → чёткая доменная ошибка, а не пустой/мусорный результат (FR-013)."""
+    (tmp_path / "binary.py").write_bytes(b"\xff\xfe\x00\x01")
+    with pytest.raises(CodeAggregationError, match="не удалось прочитать"):
+        await LocalCodeAggregator().aggregate(tmp_path)
+
+
+async def test_read_oserror_wrapped_in_code_aggregation_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """FR-013: OSError при чтении файла → CodeAggregationError (русское сообщение), а не «сырой» OSError."""
+    write(tmp_path, "broken.py", "код")
+
+    def failing_open(*_args: object, **_kwargs: object) -> types.SimpleNamespace:
+        raise OSError(5, "Input/output error")
+
+    monkeypatch.setattr(code_aggregator_module, "aiofiles", types.SimpleNamespace(open=failing_open))
+    with pytest.raises(CodeAggregationError) as exc_info:
+        await LocalCodeAggregator().aggregate(tmp_path)
+    assert "Не удалось прочитать файл" in str(exc_info.value)

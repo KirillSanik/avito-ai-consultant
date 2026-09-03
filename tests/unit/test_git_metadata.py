@@ -6,7 +6,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 from pathlib import Path
 
 import pytest
@@ -33,7 +32,8 @@ COMMIT_2 = {
     "message": "добавлен LRU-кеш",
 }
 
-PRETTY_FORMAT = '--pretty=format:{"hash":"%H","author":"%an","date":"%aI","message":"%s"}'
+PRETTY_FORMAT = "--pretty=format:%H%x1f%an%x1f%aI%x1f%s"
+FIELD_SEP = "\x1f"
 
 
 class FakeGitProcess:
@@ -71,7 +71,9 @@ def git(monkeypatch: pytest.MonkeyPatch) -> GitHarness:
 
 
 def log_stdout(commits: list[dict[str, str]]) -> bytes:
-    return "\n".join(json.dumps(commit, ensure_ascii=False) for commit in commits).encode("utf-8")
+    return (
+        "\n".join(FIELD_SEP.join(commit[key] for key in ("hash", "author", "date", "message")) for commit in commits)
+    ).encode("utf-8")
 
 
 async def test_extract_returns_commits_and_file_tree(git: GitHarness) -> None:
@@ -99,13 +101,31 @@ async def test_git_log_command_contains_pretty_format_and_no_merges(git: GitHarn
     assert "ls-files" in ls_args
 
 
-async def test_non_json_log_line_raises_with_line_number(git: GitHarness) -> None:
-    """Битая строка JSON → MetadataExtractionError с номером строки."""
-    git.enqueue(FakeGitProcess(stdout=log_stdout([COMMIT_1]) + "\nэто не JSON".encode("utf-8")))
+async def test_broken_log_line_raises_with_line_number(git: GitHarness) -> None:
+    """Битая строка (не 4 поля) → MetadataExtractionError с номером строки."""
+    broken_line = "\nэто не история коммитов"
+    git.enqueue(FakeGitProcess(stdout=log_stdout([COMMIT_1]) + broken_line.encode("utf-8")))
     git.enqueue(FakeGitProcess(stdout=b""))
     with pytest.raises(MetadataExtractionError) as exc_info:
         await GitMetadataExtractor().extract(REPO)
     assert "строка 2" in str(exc_info.value)
+
+
+async def test_commit_subject_with_quotes_is_parsed(git: GitHarness) -> None:
+    """Subject с кавычками (Revert \"...\") разбирается — регрессия JSON-транспорта.
+
+    Git не экранирует `%s`/`%an`: JSON-строки лога ломались на штатных
+    Revert-коммитах; транспорт теперь разделён байтом unit separator.
+    """
+    commit = dict(
+        COMMIT_1,
+        message='Revert "delete CONTRIBUTING.rst"',
+        author='O\'Neil, "Tony"',
+    )
+    git.enqueue(FakeGitProcess(stdout=log_stdout([COMMIT_2, commit])))
+    git.enqueue(FakeGitProcess(stdout=b""))
+    commits, _ = await GitMetadataExtractor().extract(REPO)
+    assert commits[1] == CommitInfo(**commit)
 
 
 async def test_invalid_commit_fields_raise_metadata_error(git: GitHarness) -> None:
@@ -143,3 +163,15 @@ async def test_ls_files_failure_raises_metadata_error(git: GitHarness) -> None:
     with pytest.raises(MetadataExtractionError) as exc_info:
         await GitMetadataExtractor().extract(REPO)
     assert "not a git repository" in str(exc_info.value)
+
+
+async def test_git_spawn_oserror_raises_metadata_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    """FR-013: OSError при запуске git (CLI недоступен) → MetadataExtractionError, а не «сырой» OSError."""
+
+    async def raising_spawn(*_args: object, **_kwargs: object) -> FakeGitProcess:
+        raise OSError(2, "No such file or directory")
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", raising_spawn)
+    with pytest.raises(MetadataExtractionError) as exc_info:
+        await GitMetadataExtractor().extract(REPO)
+    assert "git" in str(exc_info.value)

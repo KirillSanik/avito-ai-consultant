@@ -19,6 +19,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
 
+from ._spawn import spawn_git
 from .exceptions import RepoCloneError
 
 #: Ограничение времени клонирования, секунд (ТЗ §4.2).
@@ -71,16 +72,23 @@ def _inject_token(repo_url: str, token: str | None) -> str:
     return urlunsplit((parts.scheme, netloc, parts.path, parts.query, parts.fragment))
 
 
-def _mask_secret(value: str, token: str | None) -> str:
-    """Маскирует токен в тексте, чтобы он не попал в сообщение об ошибке (FR-011)."""
+def _mask_secrets(value: str, token: str | None, temp_dir_name: str) -> str:
+    """Маскирует токен и путь к temp-каталогу в тексте сообщения об ошибке.
+
+    Токен никогда не попадает в сообщение (FR-011); путь к временному
+    каталогу в обязательной части сообщения не фигурирует (public-api.md §3).
+    """
+    masked = value
     if token:
-        return value.replace(token, "***")
-    return value
+        masked = masked.replace(token, "***")
+    if temp_dir_name:
+        masked = masked.replace(temp_dir_name, "***")
+    return masked
 
 
-def _clone_failure_message(repo_url: str, tail: str, token: str | None) -> str:
-    """Русское сообщение о сбое: причина + хвост stderr (токен замаскирован)."""
-    message = f"Не удалось клонировать репозиторий {repo_url}: {_mask_secret(tail, token)}"
+def _clone_failure_message(repo_url: str, tail: str, token: str | None, temp_dir_name: str) -> str:
+    """Русское сообщение о сбое: причина + хвост stderr (токен и temp-путь замаскированы)."""
+    message = f"Не удалось клонировать репозиторий {repo_url}: {_mask_secrets(tail, token, temp_dir_name)}"
     lowered = tail.lower()
     if any(marker in lowered for marker in _ACCESS_FAILURE_MARKERS):
         message += (
@@ -104,14 +112,14 @@ class RepoCloner:
         temp_dir = tempfile.TemporaryDirectory(prefix="ai-detector-")
         try:
             repo_path = Path(temp_dir.name) / "repo"
-            process = await asyncio.create_subprocess_exec(
-                "git",
-                "clone",
-                clone_url,
-                str(repo_path),
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
+            try:
+                process = await spawn_git("git", "clone", clone_url, str(repo_path))
+            except OSError as exc:
+                raise RepoCloneError(
+                    f"Не удалось запустить git для клонирования {repo_url} "
+                    "(проверьте, что git CLI установлен и доступен в PATH): "
+                    f"{exc}"
+                ) from exc
             try:
                 _stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=CLONE_TIMEOUT_SECONDS)
             except TimeoutError:
@@ -123,7 +131,7 @@ class RepoCloner:
                 ) from None
             returncode = await process.wait()
             if returncode != 0:
-                raise RepoCloneError(_clone_failure_message(repo_url, _stderr_tail(stderr), token))
+                raise RepoCloneError(_clone_failure_message(repo_url, _stderr_tail(stderr), token, temp_dir.name))
             yield repo_path
         finally:
             temp_dir.cleanup()

@@ -209,3 +209,78 @@ async def test_private_repo_without_token_raises_clear_error(
     message = str(exc_info.value)
     assert "Не удалось" in message
     assert "GITHUB_TOKEN" in message  # подсказка, что для приватного репозитория нужен токен
+
+
+async def test_clone_removes_temp_dir_on_cancellation(cloner: ClonerHarness) -> None:
+    """SC-004: при отмене задачи (CancelledError) временный каталог гарантированно удалён."""
+    cloner.enqueue(FakeGitProcess(returncode=0))
+    seen: list[Path] = []
+
+    async def body() -> None:
+        async with RepoCloner().clone(REPO_URL) as repo_path:
+            seen.append(repo_path)
+            await asyncio.Event().wait()  # имитация долгого анализа внутри контекста
+
+    task = asyncio.create_task(body())
+    while not seen:
+        await asyncio.sleep(0.005)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert not seen[0].exists()
+
+
+async def test_git_spawn_oserror_maps_to_repo_clone_error(
+    cloner: ClonerHarness, clean_token_env: pytest.MonkeyPatch, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """FR-013: OSError при запуске git (CLI недоступен) → доменный RepoCloneError, а не «сырой» OSError."""
+
+    async def raising_spawn(*_args: object, **_kwargs: object) -> FakeGitProcess:
+        raise OSError(2, "No such file or directory")
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", raising_spawn)
+    with pytest.raises(RepoCloneError) as exc_info:
+        async with RepoCloner().clone(REPO_URL):
+            pass
+    assert "git" in str(exc_info.value)
+
+
+async def test_temp_dir_path_masked_in_error_message(
+    cloner: ClonerHarness, clean_token_env: pytest.MonkeyPatch, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """public-api.md §3: путь к temp-каталогу из stderr маскируется в сообщении об ошибке."""
+    from types import SimpleNamespace
+
+    import tempfile as _tempfile
+
+    holder: dict[str, str] = {}
+
+    async def fake_create_subprocess_exec(*args: object, **_kwargs: object) -> FakeGitProcess:
+        temp_name = holder["name"]
+        stderr = (
+            f"Cloning into '{temp_name}/repo'...\n"
+            f"fatal: unable to access '{temp_name}/repo/': Connection aborted\n"
+        ).encode("utf-8")
+        cloner.calls.append(tuple(str(arg) for arg in args))
+        process = FakeGitProcess(returncode=128, stderr=stderr)
+        cloner.processes.append(process)
+        return process
+
+    class FakeTempDir:
+        def __init__(self, **kwargs: object) -> None:
+            self._inner = _tempfile.TemporaryDirectory(**{key: str(value) for key, value in kwargs.items()})
+            self.name = self._inner.name
+            holder["name"] = self.name
+
+        def cleanup(self) -> None:
+            self._inner.cleanup()
+
+    monkeypatch.setattr(repo_cloner_module, "tempfile", SimpleNamespace(TemporaryDirectory=FakeTempDir))
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+
+    with pytest.raises(RepoCloneError) as exc_info:
+        async with RepoCloner().clone(REPO_URL):
+            pass
+    message = str(exc_info.value)
+    assert holder["name"] not in message
+    assert "***" in message

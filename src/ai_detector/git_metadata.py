@@ -1,33 +1,48 @@
 """Полная история коммитов и дерево файлов репозитория через git CLI (FR-002, FR-003).
 
 История — весь вывод ``git log`` (без усечения), merge-коммиты исключены (``--no-merges``).
+
+Транспортный формат истории — ``%H``, ``%an``, ``%aI``, ``%s``, разделённые
+байтом unit separator (``%x1f``): git не экранирует subject (`%s`) и имя
+автора (`%an`), поэтому JSON-строки вида ``{"message":"%s"}`` ломаются на
+абсолютно штатных коммитах (например, ``Revert "..."``). Байт ``0x1f`` в
+subject практически невозможен; при его наличии разбор падает явно
+(``MetadataExtractionError``) — fail-loud по data-model.md §1. В промпт
+история попадает в pipe-формате контракта (llm-structured-output.md §4),
+т.е. транспортный формат не виден LLM.
 """
 
 from __future__ import annotations
 
-import asyncio
-import json
 from pathlib import Path
 
-from pydantic import ValidationError
-
+from ._spawn import spawn_git
 from .exceptions import MetadataExtractionError
 from .models import CommitInfo
 
-#: Формат JSON-строк истории — единый аргумент argv (контракт contracts/llm-structured-output.md).
-COMMIT_LOG_FORMAT = '--pretty=format:{"hash":"%H","author":"%an","date":"%aI","message":"%s"}'
+#: Разделитель полей в строке истории: байт unit separator (``%x1f`` в pretty-format git).
+_FIELD_SEPARATOR = "\x1f"
+
+#: Формат строки истории (``hash`` / ``author`` / ``date ISO`` / ``subject``) —
+#: единый аргумент argv; источники полей — data-model.md §1.
+COMMIT_LOG_FORMAT = "--pretty=format:%H%x1f%an%x1f%aI%x1f%s"
 
 
 async def _run_git(repo_path: Path, *args: str) -> tuple[int, bytes, bytes]:
-    """Запуск git-команды в каталоге репозитория; возвращает (код возврата, stdout, stderr)."""
-    process = await asyncio.create_subprocess_exec(
-        "git",
-        "-C",
-        str(repo_path),
-        *args,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
+    """Запуск git-команды в каталоге репозитория; возвращает (код возврата, stdout, stderr).
+
+    Сбой запуска (например, git CLI недоступен) оборачивается в
+    ``MetadataExtractionError`` — наружу пробрасывается только доменная
+    иерархия ``AIDetectionError`` (FR-013, contracts/public-api.md §2–3).
+    """
+    try:
+        process = await spawn_git("git", "-C", str(repo_path), *args)
+    except OSError as exc:
+        raise MetadataExtractionError(
+            f"Не удалось запустить git для команды «git {' '.join(args)}» "
+            "(проверьте, что git CLI установлен и доступен в PATH): "
+            f"{exc}"
+        ) from exc
     stdout, stderr = await process.communicate()
     returncode = await process.wait()
     return returncode, stdout, stderr
@@ -59,12 +74,11 @@ class GitMetadataExtractor:
             if not line.strip():
                 continue
             try:
-                raw_commit = json.loads(line)
-                commits.append(CommitInfo(**raw_commit))
-            except (json.JSONDecodeError, ValidationError) as exc:
+                commits.append(_parse_commit_line(line))
+            except ValueError as exc:  # ValidationError наследуется от ValueError
                 raise MetadataExtractionError(
                     f"Не удалось разобрать историю коммитов: строка {line_number} "
-                    f"не соответствует формату JSON/схемы CommitInfo"
+                    f"не соответствует схеме CommitInfo"
                 ) from exc
         return commits
 
@@ -73,3 +87,16 @@ class GitMetadataExtractor:
         if returncode != 0:
             raise MetadataExtractionError(_git_error_detail(returncode, "git ls-files", stderr))
         return [line.strip() for line in stdout.decode("utf-8").splitlines() if line.strip()]
+
+
+def _parse_commit_line(line: str) -> CommitInfo:
+    """Разбирает строку истории ``hash␟author␟date␟subject`` в ``CommitInfo``.
+
+    Некорректное число полей — явная ошибка разбора (fail-loud, data-model.md §1);
+    валидацию полей (hash-regex, ISO 8601, однострочность) выполняет pydantic.
+    """
+    fields = line.split(_FIELD_SEPARATOR)
+    if len(fields) != 4:
+        raise ValueError(f"ожидалось 4 поля (hash/author/date/subject), получено {len(fields)}")
+    commit_hash, author, date, message = fields
+    return CommitInfo(hash=commit_hash, author=author, date=date, message=message)
