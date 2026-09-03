@@ -7,6 +7,8 @@ llm_client не используется, т.к. judge подменяется ц
 from __future__ import annotations
 
 import asyncio
+import os
+import tempfile
 from contextlib import asynccontextmanager
 from pathlib import Path
 from types import SimpleNamespace
@@ -14,7 +16,7 @@ from types import SimpleNamespace
 import pytest
 
 from ai_detector.code_aggregator import LocalCodeAggregator
-from ai_detector.exceptions import MetadataExtractionError
+from ai_detector.exceptions import AIDetectionError, MetadataExtractionError, RepoCloneError
 from ai_detector.git_metadata import GitMetadataExtractor
 from ai_detector.llm_judge import LLMJudge
 from ai_detector.models import AIAssessmentResult, CommitInfo
@@ -174,3 +176,77 @@ async def test_analyze_cleans_clone_on_pipeline_failure() -> None:
     with pytest.raises(MetadataExtractionError):
         await service.analyze("критерий", REPO_URL)
     assert cloner.cleanup_called is True
+
+
+def _detector_temp_dirs() -> set[str]:
+    return {name for name in os.listdir(tempfile.gettempdir()) if name.startswith("ai-detector-")}
+
+
+async def test_analyze_continues_with_empty_commit_history() -> None:
+    """Дегенеративный случай: 0 не-merge коммитов — анализ продолжается, judge получает пустую историю."""
+
+    class EmptyHistoryExtractor:
+        async def extract(self, repo_path: Path) -> tuple[list[CommitInfo], list[str]]:
+            return [], FILE_TREE
+
+    service, _cloner, judge = build_service()
+    service._extractor = EmptyHistoryExtractor()
+
+    result = await service.analyze("критерий", REPO_URL)
+
+    assert result.status == "green"
+    (call,) = judge.calls
+    assert call["commits"] == []  # пустая история доходит до оценки без срыва
+
+
+async def test_network_failure_mid_clone_raises_domain_error_and_cleans_temp(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Сетевой сбой в середине клонирования → RepoCloneError (иерархия AIDetectionError) + нет остатков temp (FR-010, FR-013)."""
+
+    class FailingCloneProcess:
+        async def communicate(self) -> tuple[bytes, bytes]:
+            return b"", b"fatal: unable to access 'https://github.com/o/r.git/': Could not resolve host\n"
+
+        async def wait(self) -> int:
+            return 128
+
+        def kill(self) -> None:
+            pass
+
+    async def failing_spawn(*_args: object, **_kwargs: object) -> FailingCloneProcess:
+        return FailingCloneProcess()
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", failing_spawn)
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    monkeypatch.delenv("AI_DETECTOR_GIT_TOKEN", raising=False)
+
+    service = AIDetectionService(SimpleNamespace())  # type: ignore[arg-type]
+    before = _detector_temp_dirs()
+    with pytest.raises(AIDetectionError) as exc_info:
+        await service.analyze("критерий", REPO_URL)
+
+    assert isinstance(exc_info.value, RepoCloneError)
+    assert "Не удалось" in str(exc_info.value)  # русское сообщение
+    assert "ai-detector-" not in str(exc_info.value)  # без пути к temp-каталогу
+    assert _detector_temp_dirs() == before  # следов клона не осталось
+
+
+async def test_git_spawn_oserror_leaves_only_domain_hierarchy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """FR-013: низкоуровневый OSError при запуске subprocess маппится в доменное исключение
+    — наружу из analyze выходит только иерархия AIDetectionError."""
+
+    async def raising_spawn(*_args: object, **_kwargs: object) -> object:
+        raise OSError(2, "git CLI недоступен")
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", raising_spawn)
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    monkeypatch.delenv("AI_DETECTOR_GIT_TOKEN", raising=False)
+
+    service = AIDetectionService(SimpleNamespace())  # type: ignore[arg-type]
+    with pytest.raises(AIDetectionError) as exc_info:
+        await service.analyze("критерий", REPO_URL)
+    assert isinstance(exc_info.value, RepoCloneError)
+    assert type(exc_info.value) is not OSError

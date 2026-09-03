@@ -218,3 +218,21 @@ async def test_exhausted_error_is_plain_llm_judgement_error(instant_sleep: None)
         await LLMJudge(make_client(dead_parse)).evaluate("к", [], [], "код")  # type: ignore[arg-type]
     assert type(exc_info.value) is LLMJudgementError
     assert "исчерпан" in str(exc_info.value)
+
+
+async def test_empty_commit_history_renders_empty_prompt_section(instant_sleep: None) -> None:
+    """Дегенеративный случай: история из 0 не-merge коммитов — секция в промпте присутствует, но пуста."""
+    calls: list[dict[str, object]] = []
+
+    async def fake_parse(**kwargs: object) -> SimpleNamespace:
+        calls.append(kwargs)
+        return make_response(make_result())
+
+    await LLMJudge(make_client(fake_parse)).evaluate("к", ["lru.py"], [], FULL_CODE)  # type: ignore[arg-type]
+
+    (call,) = calls
+    messages = call["messages"]
+    user = messages[1]
+    content = str(user["content"])
+    assert "- История коммитов: \n" in content  # секция на месте, значение пустое
+    assert FULL_CODE in content  # код при этом передаётся целиком

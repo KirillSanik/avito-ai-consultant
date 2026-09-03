@@ -1,21 +1,28 @@
-"""Интеграционный дым: полный пайплайн на реальном локальном git-репозитории (T018).
+"""Интеграционный дым: полный пайплайн на реальном локальном git-репозитории (T018, T026).
 
 Сценарий (quickstart.md §4): фиксатурный репозиторий (`git init` + коммиты в `tmp_path`) +
 реальный `git clone` локальным путём + мок `AsyncOpenAI` → `AIDetectionService.analyze`
 возвращает полный `AIAssessmentResult`; после вызова temp-каталоги не остаются (SC-004).
+
+Негативные сценарии (quickstart.md §6, T026): несуществующий URL → `RepoCloneError`;
+репозиторий без поддерживаемого кода → `CodeAggregationError`; мёртвый LLM-порт
+(`APIConnectionError`) → `LLMJudgementError` после ровно 3 повторов (SC-006).
 """
 
 from __future__ import annotations
 
+import asyncio
 import os
 import subprocess
 import tempfile
 from pathlib import Path
 from types import SimpleNamespace
 
+import httpx
 import pytest
+from openai import APIConnectionError
 
-from ai_detector import AIAssessmentResult, AIDetectionService
+from ai_detector import AIAssessmentResult, AIDetectionService, CodeAggregationError, LLMJudgementError, RepoCloneError
 
 TASK_CRITERIA = "Критерии: LRU-кэш с ограничением capacity, методами get/set/clear, без внешних зависимостей."
 
@@ -135,3 +142,87 @@ async def test_full_pipeline_returns_result_and_leaves_no_temp_dirs(source_repo:
     assert "student | Добавил метод clear" in prompt
     # Временные каталоги не остались (SC-004).
     assert _detector_temp_dirs() == before
+
+
+# ---------------------------------------------------------------------------
+# Негативные сценарии (quickstart.md §6, T026)
+# ---------------------------------------------------------------------------
+
+
+def _default_result() -> AIAssessmentResult:
+    return AIAssessmentResult(
+        status="green",
+        confidence=0.9,
+        reasoning="причина",
+        ai_indicators=[],
+        human_indicators=[],
+    )
+
+
+async def test_nonexistent_repo_url_raises_repo_clone_error(tmp_path: Path) -> None:
+    """quickstart §6: несуществующий URL → RepoCloneError с русским сообщением, без следов temp (FR-013, SC-004)."""
+    service, _completions = _make_service(_default_result())
+    before = _detector_temp_dirs()
+
+    with pytest.raises(RepoCloneError) as exc_info:
+        await service.analyze(TASK_CRITERIA, str(tmp_path / "does-not-exist"))
+
+    assert "Не удалось" in str(exc_info.value)  # человекочитаемое сообщение на русском
+    assert _detector_temp_dirs() == before  # следов клона не осталось
+
+
+@pytest.fixture
+def image_only_repo(tmp_path: Path) -> Path:
+    """Локальный git-репозиторий без ни одного поддерживаемого файла (только изображение)."""
+    src = tmp_path / "images-only"
+    src.mkdir()
+    _git(src, "init", "-q")
+    _git(src, "config", "user.name", "student")
+    _git(src, "config", "user.email", "student@example.com")
+    (src / "photo.png").write_bytes(b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR binary")
+    _git(src, "add", "-A")
+    _git(src, "commit", "-q", "-m", "только изображения")
+    return src
+
+
+async def test_repo_without_supported_code_raises_code_aggregation_error(image_only_repo: Path) -> None:
+    """quickstart §6: репозиторий без поддерживаемого кода → CodeAggregationError «no supported source files»."""
+    service, _completions = _make_service(_default_result())
+    before = _detector_temp_dirs()
+
+    with pytest.raises(CodeAggregationError, match="no supported source files"):
+        await service.analyze(TASK_CRITERIA, str(image_only_repo))
+
+    assert _detector_temp_dirs() == before  # клон удалён даже при сбое агрегации
+
+
+async def test_dead_llm_server_raises_judgement_error_after_three_retries(
+    source_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """quickstart §6: мёртвый LLM-порт (APIConnectionError) → LLMJudgementError после ровно 3 повторов (SC-006)."""
+
+    async def _sleep(_delay: float) -> None:
+        return None  # реальные экспоненциальные задержки между ретраями убираем
+
+    monkeypatch.setattr(asyncio, "sleep", _sleep)
+
+    request = httpx.Request("POST", "http://127.0.0.1:1/v1/chat/completions")
+    attempts = 0
+
+    async def dead_parse(**_kwargs: object) -> SimpleNamespace:
+        nonlocal attempts
+        attempts += 1
+        raise APIConnectionError(request=request)
+
+    client = SimpleNamespace(
+        beta=SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(parse=dead_parse)))
+    )
+    service = AIDetectionService(client)  # type: ignore[arg-type]
+    before = _detector_temp_dirs()
+
+    with pytest.raises(LLMJudgementError) as exc_info:
+        await service.analyze(TASK_CRITERIA, str(source_repo))
+
+    assert attempts == 3  # ровно 3 попытки, без «мусорного» вердикта
+    assert "исчерпан" in str(exc_info.value)
+    assert _detector_temp_dirs() == before  # клон удалён даже при устойчивом сбое LLM
