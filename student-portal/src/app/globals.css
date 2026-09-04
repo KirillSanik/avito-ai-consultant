@@ -1,0 +1,46 @@
+@import url("https://fonts.googleapis.com/css2?family=Instrument+Serif&family=Inter:wght@400;500;600;700&family=JetBrains+Mono&display=swap");
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+* { box-sizing: border-box; }
+html, body { min-height: 100%; }
+body {
+  margin: 0;
+  color: #111827;
+  background: #f4f6fb;
+  font-family: "Inter", Arial, sans-serif;
+}
+button, input, textarea, select { font: inherit; }
+input, textarea, select {
+  width: 100%;
+  border: 1px solid #dde1ed;
+  border-radius: 8px;
+  background: #f8f9fc;
+  padding: 0.625rem 0.875rem;
+  color: #111827;
+}
+input:focus-visible, textarea:focus-visible, select:focus-visible,
+button:focus-visible, a:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px #4f6bef;
+}
+
+@layer components {
+  .card {
+    @apply rounded-xl border border-border bg-white shadow-sm;
+  }
+  .button-primary {
+    @apply inline-flex items-center justify-center rounded-lg bg-primary px-4 py-2.5 text-sm font-medium text-white transition hover:bg-primary-dark disabled:cursor-not-allowed disabled:bg-slate-300;
+  }
+  .button-secondary {
+    @apply inline-flex items-center justify-center rounded-lg border border-border bg-white px-4 py-2.5 text-sm font-medium text-muted transition hover:border-accent hover:text-foreground disabled:opacity-50;
+  }
+  .field-label {
+    @apply mb-1.5 block text-xs font-medium uppercase tracking-wide text-muted;
+  }
+  .eyebrow {
+    @apply mb-1.5 text-xs font-semibold uppercase tracking-[0.12em] text-muted;
+  }
+}
