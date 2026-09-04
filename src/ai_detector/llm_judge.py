@@ -31,10 +31,6 @@ from .utils.exceptions import LLMJudgementError
 
 logger = logging.getLogger(__name__)
 
-#: Модель по умолчанию, если не задан ``AI_DETECTOR_LLM_MODEL`` (заглушка для локального сервера).
-DEFAULT_LLM_MODEL = "local-model"
-
-
 class LLMJudge:
     """Один Structured Output-запрос к локальной LLM; вердикт — объект ``AIAssessmentResult``."""
 
@@ -44,7 +40,7 @@ class LLMJudge:
         self._client = client
         # Окружение читается при каждом обращении (сохранено поведение прежнего
         # common.config.llm_model; кешированные Settings не подходят).
-        self._model = model or os.getenv("AI_DETECTOR_LLM_MODEL") or DEFAULT_LLM_MODEL
+        self._model = model or os.getenv("AI_DETECTOR_LLM_MODEL") or get_settings().ai_detector_llm_model
         provider = os.getenv("AI_DETECTOR_LLM_PROVIDER", "local")
         self._model_chain: tuple[str, ...] = (
             tuple(dict.fromkeys((self._model, *OPENROUTER_FREE_MODELS)))
