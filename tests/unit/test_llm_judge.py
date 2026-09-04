@@ -23,7 +23,7 @@ from openai import (
 from ai_detector import llm_judge as llm_judge_module
 from ai_detector.llm_judge import LLMJudge
 from ai_detector.utils.exceptions import LLMJudgementError
-from ai_detector.utils.models import AIAssessmentResult, CommitInfo
+from common.models import AIAssessmentResult, CommitInfo
 
 REQUEST = httpx.Request("POST", "http://localhost:8000/v1/chat/completions")
 COMMIT = CommitInfo(

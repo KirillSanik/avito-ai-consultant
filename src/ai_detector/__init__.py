@@ -12,7 +12,7 @@ from ai_detector.utils.exceptions import (
     MetadataExtractionError,
     RepoCloneError,
 )
-from ai_detector.utils.models import AIAssessmentResult, CommitInfo
+from common.models import AIAssessmentResult, CommitInfo
 
 __all__ = [
     "AIAssessmentResult",

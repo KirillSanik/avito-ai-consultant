@@ -1,15 +1,45 @@
+"""CLI-фасад homework_reviewer (команда ``homework-reviewer``).
+
+Настройки — ``common.settings.Settings`` (env/``.env`` + флаги командной
+строки), клиенты — фабрики ``common.clients``, движок оценки — async
+(``asyncio.run``). CLI не дублирует логику: только аргументы и вывод.
+"""
+
+from __future__ import annotations
+
+import asyncio
 from pathlib import Path
 
 import click
 
-from common.config import AppConfig
+from common.clients import get_openrouter_client
+from common.settings import Settings
 from homework_reviewer.evaluator.grading_engine import GradingEngine
+from homework_reviewer.exceptions import EvaluationError
 from homework_reviewer.parsers.submission_parser import SubmissionParser
 from homework_reviewer.parsers.task_parser import TaskParser
 from homework_reviewer.reports.pdf_generator import generate_evaluation_pdf
 from homework_reviewer.repository.evaluation_repository import EvaluationRepository
 from homework_reviewer.repository.submission_repository import SubmissionRepository
 from homework_reviewer.repository.task_repository import TaskRepository
+
+
+def _settings(
+    llm_provider: str,
+    api_base: str | None,
+    api_key: str | None,
+    model: str | None,
+    test_mode: bool,
+) -> Settings:
+    """Сборка настроек: флаги командной строки имеют приоритет над env/``.env``."""
+    overrides: dict[str, str | bool] = {"llm_provider": llm_provider, "test_mode": test_mode}
+    if api_base is not None:
+        overrides["api_base"] = api_base
+    if api_key is not None:
+        overrides["api_key"] = api_key
+    if model is not None:
+        overrides["model_name"] = model
+    return Settings(**overrides)
 
 
 @click.group()
@@ -33,12 +63,9 @@ def ingest_task(
     pdf_path: Path, task_id: str, llm_provider: str, api_base: str | None, api_key: str | None,
     model: str | None, model_name: str | None, test_mode: bool,
 ) -> None:
-    config = AppConfig(
-        test_mode=test_mode, llm_provider=llm_provider, model=model_name or model,
-        api_base=api_base, api_key=api_key,
-    )
-    parser = TaskParser(config)
-    rubric = parser.parse_task(str(pdf_path), task_id)
+    settings = _settings(llm_provider, api_base, api_key, model_name or model, test_mode)
+    parser = TaskParser(settings, get_openrouter_client(settings))
+    rubric = asyncio.run(parser.parse_task(pdf_path, task_id))
     saved_path = TaskRepository().save(rubric)
     click.echo(rubric.model_dump_json(indent=2))
     click.echo(f"\nЗадание сохранено: {saved_path}")
@@ -61,8 +88,8 @@ def parse_submission(
 ) -> None:
     if bool(submission_path) == bool(repository_url):
         raise click.UsageError("Укажите ровно один источник: --file или --url")
-    config = AppConfig(test_mode=test_mode, llm_provider=llm_provider, model=model_name or model)
-    parser = SubmissionParser(config, task_id)
+    settings = _settings(llm_provider, None, None, model_name or model, test_mode)
+    parser = SubmissionParser(settings, task_id)
     if repository_url:
         submission = parser.parse_github_repository(repository_url)
     else:
@@ -110,29 +137,27 @@ def evaluate(
         submission_id = submission_id or "test_repo_ds"
     if not task_id:
         raise click.UsageError("--task-id is required outside test mode")
-    config = AppConfig(
-        test_mode=test_mode, llm_provider=llm_provider, model=model_name or model,
-        api_base=api_base, api_key=api_key,
-    )
+    settings = _settings(llm_provider, api_base, api_key, model_name or model, test_mode)
     rubric = TaskRepository().load(task_id)
     if submission_id:
         submission = SubmissionRepository().load(submission_id)
     elif submission_path:
-        submission = SubmissionParser(config, task_id).parse_submission(str(submission_path), task_id)
+        submission = SubmissionParser(settings, task_id).parse_submission(str(submission_path), task_id)
     else:
         raise click.UsageError("Укажите --submission-id или --submission-file")
     try:
-        report = GradingEngine(config).evaluate_submission(rubric, submission, config)
-    except ValueError as exc:
+        engine = GradingEngine(get_openrouter_client(settings), settings)
+        report = asyncio.run(engine.evaluate_submission(rubric, submission))
+    except (ValueError, EvaluationError) as exc:
         raise click.ClickException(str(exc)) from exc
     for result in report.criterion_results:
         click.echo(f"{result.criterion_name}: {result.assigned_score:g}/{result.max_points:g}")
     click.echo(f"Итого: {report.total_score:g}/{report.max_total_score:g}")
-    saved_path = EvaluationRepository().storage_dir / f"{report.submission_id}.json"
+    saved_path = EvaluationRepository().save(report)
     click.echo(f"Отчёт сохранён: {saved_path}")
     if generate_pdf:
-        output_path = EvaluationRepository().storage_dir.parent / "reports" / f"{report.submission_id}.pdf"
-        click.echo(f"PDF отчёт: {generate_evaluation_pdf(str(saved_path), str(output_path))}")
+        output_path = Path(saved_path).parent.parent / "reports" / f"{report.submission_id}.pdf"
+        click.echo(f"PDF отчёт: {generate_evaluation_pdf(saved_path, str(output_path))}")
 
 
 @cli.command("generate-pdf")

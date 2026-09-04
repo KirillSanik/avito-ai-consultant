@@ -100,7 +100,7 @@ def _make_service(result: AIAssessmentResult) -> tuple[AIDetectionService, FakeC
 
 
 def _detector_temp_dirs() -> set[str]:
-    return {name for name in os.listdir(tempfile.gettempdir()) if name.startswith("ai-detector-")}
+    return {name for name in os.listdir(tempfile.gettempdir()) if name.startswith("avito-review-")}
 
 
 def _user_prompt_of(completions: FakeCompletions) -> str:

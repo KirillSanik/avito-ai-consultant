@@ -22,13 +22,17 @@ dependencies = [
     "pdfplumber>=0.10",
     "python-dotenv>=1.0",
     "reportlab>=4.0",
+    "fastapi>=0.141.1",
+    "uvicorn>=0.52.4",
+    "pydantic-settings>=2.15.0",
+    "python-multipart>=0.0.32",
 ]
 
 [project.scripts]
 homework-reviewer = "homework_reviewer.cli:cli"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/ai_detector", "src/common", "src/homework_reviewer"]
+packages = ["src/ai_detector", "src/common", "src/core", "src/homework_reviewer"]
 
 [dependency-groups]
 dev = [
@@ -69,7 +73,7 @@ ignore = [
 ]
 
 [tool.ruff.lint.isort]
-known-first-party = ["ai_detector", "common", "homework_reviewer"]
+known-first-party = ["ai_detector", "common", "core", "homework_reviewer"]
 
 [tool.mypy]
 python_version = "3.11"

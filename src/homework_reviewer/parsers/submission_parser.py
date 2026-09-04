@@ -1,3 +1,11 @@
+"""Разбор сдач студентов: локальные файлы (xlsx/docx/pdf) и GitHub-репозитории.
+
+Клонирование и чтение файлов — изолированы: ``build_from_local_repository``
+работает с **уже клонированным** репозиторием (используется и CLI, и
+``GradingEngine.evaluate_from_path``), а ``parse_github_repository`` сама
+делает временный shallow-клон для CLI-сценария.
+"""
+
 import re
 import subprocess
 import tempfile
@@ -7,11 +15,11 @@ from urllib.parse import quote, urlparse, urlunparse
 
 import pdfplumber
 
-from common.config import AppConfig
-from homework_reviewer.models.submission import SubmissionData
-from homework_reviewer.parsers.docx_parser import DOCXParser
+from common.models import SubmissionData
+from common.parsers.docx_parser import DOCXParser
+from common.parsers.xlsx_parser import XLSXParser
+from common.settings import Settings, get_settings
 from homework_reviewer.parsers.link_parser import LinkParser
-from homework_reviewer.parsers.xlsx_parser import XLSXParser
 
 
 class SubmissionParser:
@@ -31,8 +39,8 @@ class SubmissionParser:
         {"описаниезадания", "taskdescription", "assignmentdescription"}
     )
 
-    def __init__(self, config: AppConfig | None = None, task_id: str = "") -> None:
-        self.config = config or AppConfig()
+    def __init__(self, settings: Settings | None = None, task_id: str = "") -> None:
+        self.settings = settings or get_settings()
         self.task_id = task_id
         self.link_parser = LinkParser()
         self.parsers = {".xlsx": XLSXParser(), ".docx": DOCXParser()}
@@ -63,6 +71,47 @@ class SubmissionParser:
             image_count=parsed["image_count"],
         )
 
+    def build_from_local_repository(self, repository_root: Path, submission_id: str, task_id: str) -> SubmissionData:
+        """Собирает ``SubmissionData`` из уже клонированного локального репозитория.
+
+        Без клонирования: ``repository_root`` должен содержать рабочую копию
+        (используется ``Pipeline``/``GradingEngine.evaluate_from_path``).
+        Синхронный метод — в async-контексте вызывать через ``asyncio.to_thread``.
+        """
+        repository_root = Path(repository_root)
+        if not (repository_root / ".git").exists():
+            raise FileNotFoundError(f"Каталог не является git-репозиторием: {repository_root}")
+        included_files = self._repository_files(repository_root)
+        file_tree = [path.relative_to(repository_root).as_posix() for path in included_files]
+        tree_text = "\n".join(file_tree)
+        file_blocks: list[str] = []
+        tables: list[dict] = []
+        links: list[str] = []
+        image_count = 0
+        for path in included_files:
+            relative_path = path.relative_to(repository_root).as_posix()
+            parsed = self._parse_repository_file(path)
+            content = parsed["raw_text"]
+            file_blocks.append(f"=== FILE: {relative_path} ===\n{content}\n=== END FILE: {relative_path} ===")
+            tables.extend(parsed["tables"])
+            links.extend(parsed["links"])
+            image_count += parsed["image_count"]
+        raw_text = f"Repository tree:\n{tree_text}"
+        if file_blocks:
+            raw_text = f"{raw_text}\n\n" + "\n\n".join(file_blocks)
+        links.extend(self.link_parser.extract_urls(raw_text))
+        unique_urls = list(dict.fromkeys(links))
+        return SubmissionData(
+            submission_id=submission_id,
+            task_id=task_id,
+            file_type="github",
+            file_tree=file_tree,
+            raw_text=raw_text,
+            tables=tables,
+            resolved_links=[self.link_parser.resolve_link(url) for url in unique_urls],
+            image_count=image_count,
+        )
+
     def parse_github_repository(self, repo_url: str) -> SubmissionData:
         clone_url = self._authenticated_clone_url(repo_url)
         repository_name = Path(urlparse(repo_url).path).stem or "github-repository"
@@ -77,48 +126,19 @@ class SubmissionParser:
                 )
             except subprocess.CalledProcessError as exc:
                 message = (exc.stderr or exc.stdout or "git clone завершился ошибкой").replace(clone_url, repo_url)
-                if self.config.github_token:
-                    message = message.replace(self.config.github_token, "***")
+                if self.settings.git_token:
+                    message = message.replace(self.settings.git_token, "***")
                 raise RuntimeError(f"Не удалось клонировать GitHub-репозиторий: {message.strip()}") from exc
-            included_files = self._repository_files(repository_root)
-            file_tree = [path.relative_to(repository_root).as_posix() for path in included_files]
-            tree_text = "\n".join(file_tree)
-            file_blocks: list[str] = []
-            tables: list[dict] = []
-            links: list[str] = []
-            image_count = 0
-            for path in included_files:
-                relative_path = path.relative_to(repository_root).as_posix()
-                parsed = self._parse_repository_file(path)
-                content = parsed["raw_text"]
-                file_blocks.append(f"=== FILE: {relative_path} ===\n{content}\n=== END FILE: {relative_path} ===")
-                tables.extend(parsed["tables"])
-                links.extend(parsed["links"])
-                image_count += parsed["image_count"]
-            raw_text = f"Repository tree:\n{tree_text}"
-            if file_blocks:
-                raw_text = f"{raw_text}\n\n" + "\n\n".join(file_blocks)
-            links.extend(self.link_parser.extract_urls(raw_text))
-            unique_urls = list(dict.fromkeys(links))
-            return SubmissionData(
-                submission_id=repository_name,
-                task_id=self.task_id,
-                file_type="github",
-                file_tree=file_tree,
-                raw_text=raw_text,
-                tables=tables,
-                resolved_links=[self.link_parser.resolve_link(url) for url in unique_urls],
-                image_count=image_count,
-            )
+            return self.build_from_local_repository(repository_root, repository_name, self.task_id)
 
     def _authenticated_clone_url(self, repo_url: str) -> str:
         parsed = urlparse(repo_url)
         if parsed.scheme != "https" or parsed.hostname not in {"github.com", "www.github.com"}:
             raise ValueError("Поддерживаются только HTTPS-ссылки на GitHub-репозитории.")
-        if not self.config.github_token:
+        if not self.settings.git_token:
             return repo_url
         hostname = parsed.hostname or "github.com"
-        netloc = f"{quote(self.config.github_token, safe='')}@{hostname}"
+        netloc = f"{quote(self.settings.git_token, safe='')}@{hostname}"
         if parsed.port:
             netloc = f"{netloc}:{parsed.port}"
         return urlunparse(parsed._replace(netloc=netloc))

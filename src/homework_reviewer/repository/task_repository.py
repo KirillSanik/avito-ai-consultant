@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from homework_reviewer.models.rubric import TaskRubric
+from common.models import TaskRubric
 
 
 class TaskRepository:

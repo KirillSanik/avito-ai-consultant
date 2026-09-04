@@ -21,7 +21,7 @@ from ai_detector.llm_judge import LLMJudge
 from ai_detector.repo_cloner import RepoCloner
 from ai_detector.service import AIDetectionService
 from ai_detector.utils.exceptions import AIDetectionError, MetadataExtractionError, RepoCloneError
-from ai_detector.utils.models import AIAssessmentResult, CommitInfo
+from common.models import AIAssessmentResult, CommitInfo
 
 REPO_PATH = Path("/tmp/fake-clone") / "repo"
 REPO_URL = "https://github.com/o/r.git"

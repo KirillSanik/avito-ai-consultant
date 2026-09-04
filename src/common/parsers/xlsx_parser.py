@@ -1,8 +1,10 @@
+"""Извлечение текста, таблиц, ссылок и аудита формул из XLSX (перенесено в общий слой)."""
+
 from pathlib import Path
 
 from openpyxl import load_workbook
 
-from homework_reviewer.models.submission import ExcelAudit
+from common.models import ExcelAudit
 
 
 def _render_markdown_row(row: list[str]) -> str:

@@ -18,9 +18,10 @@ import logging
 import time
 from pathlib import Path
 
-from ._spawn import spawn_git
+from common.models import CommitInfo
+from common.spawn import spawn_git
+
 from .utils.exceptions import MetadataExtractionError
-from .utils.models import CommitInfo
 
 logger = logging.getLogger(__name__)
 
