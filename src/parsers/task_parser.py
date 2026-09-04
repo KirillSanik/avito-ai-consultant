@@ -2,12 +2,13 @@ import re
 from pathlib import Path
 
 import click
-import instructor
+from instructor.core import InstructorRetryException
 import pdfplumber
-from openai import APIConnectionError, APIError, APITimeoutError, OpenAI
+from openai import APIConnectionError, APIError, APITimeoutError
 from pydantic import BaseModel, Field
 
 from src.config import AppConfig
+from src.evaluator.client_factory import get_instructor_client
 from src.models.rubric import Constraints, Criterion, TaskRubric
 
 
@@ -54,10 +55,18 @@ class TaskParser:
         click.echo("[1/3] Extracting text from PDF...")
         full_instructions = self.extract_pdf_content(pdf_path)
         content = self._clean_and_truncate(full_instructions)
-        api_base = api_base or self.config.api_base
-        api_key = api_key or self.config.api_key
-        model_name = model_name or self.config.model_name
-        client = instructor.from_openai(OpenAI(base_url=api_base, api_key=api_key), mode=instructor.Mode.JSON)
+        config = AppConfig(
+            test_mode=self.config.test_mode,
+            llm_provider=self.config.llm_provider,
+            model_name=model_name or self.config.model_name,
+            api_base=api_base or self.config.api_base,
+            api_key=api_key or self.config.api_key,
+            openrouter_api_key=self.config.openrouter_api_key,
+        )
+        try:
+            client = get_instructor_client(config)
+        except ValueError as exc:
+            raise click.ClickException(str(exc)) from exc
         system_prompt = (
             "Ты эксперт по анализу учебных заданий на русском языке. Извлеки требования "
             "из текста PDF и заполни предложенную схему. Сохраняй исходный смысл на русском. "
@@ -72,9 +81,9 @@ class TaskParser:
             "без повторения исходного документа."
         )
         user_prompt = f"Идентификатор задания: {task_id}\n\nТекст задания:\n{content}"
-        click.echo(f"[2/3] Sending cleaned text to Ollama ({model_name})...")
+        click.echo(f"[2/3] Sending cleaned text to {config.llm_provider} ({config.model_name})...")
         request_options = {
-            "model": model_name,
+            "model": config.model_name,
             "response_model": ParsedTaskRubric,
             "max_retries": 1,
             "max_tokens": 2600,
@@ -84,13 +93,22 @@ class TaskParser:
                 {"role": "user", "content": user_prompt},
             ],
         }
-        if self.config.ollama_extra_body:
-            request_options["extra_body"] = self.config.ollama_extra_body
+        if config.ollama_extra_body:
+            request_options["extra_body"] = config.ollama_extra_body
         try:
             rubric = client.chat.completions.create(**request_options)
-        except (APITimeoutError, APIConnectionError, APIError) as exc:
-            click.echo(f"Ошибка Ollama: сервис не ответил в течение 5 минут или запрос завершился ошибкой: {exc}", err=True)
-            raise click.ClickException("Не удалось получить разбор задания от Ollama.") from exc
+        except (APITimeoutError, APIConnectionError, APIError, InstructorRetryException) as exc:
+            extracted_criteria = self._extract_criteria(full_instructions)
+            if not extracted_criteria:
+                click.echo(f"Ошибка LLM-провайдера: сервис не ответил в течение 5 минут или запрос завершился ошибкой: {exc}", err=True)
+                raise click.ClickException("Не удалось получить разбор задания.") from exc
+            rubric = ParsedTaskRubric(
+                task_id=task_id,
+                title=self._fallback_title(full_instructions, task_id),
+                description=self._fallback_description(full_instructions),
+                guidelines=self._extract_guidelines(full_instructions),
+                criteria=extracted_criteria,
+            )
         extracted_criteria = self._extract_criteria(full_instructions)
         criteria = extracted_criteria or rubric.criteria
         guidelines = rubric.guidelines or self._extract_guidelines(full_instructions)
@@ -117,19 +135,28 @@ class TaskParser:
         if "Критерии оценивания" not in content:
             return []
         criteria_section = content.split("Критерии оценивания", 1)[1]
-        pattern = re.compile(
-            r"(?P<name>[^\n]+)\n(?:Максимум:\n)?Идеальный результат:\s*"
-            r"(?P<description>.*?)(?:Максимум:\n)?0-(?P<max_points>\d+(?:[.,]\d+)?)\s*балл",
-            re.DOTALL,
-        )
         criteria = []
-        for match in pattern.finditer(criteria_section):
-            description = re.sub(r"\s+", " ", match.group("description")).strip()
+        heading_pattern = re.compile(
+            r"(?P<name>[^\n]+)\n(?:Максимум:\s*)?Идеальный результат:\s*",
+            re.MULTILINE,
+        )
+        headings = list(heading_pattern.finditer(criteria_section))
+        score_pattern = re.compile(r"0-(?P<max_points>\d+(?:[.,]\d+)?)\s*балл(?:а|ов)?")
+        for index, heading in enumerate(headings):
+            block_end = headings[index + 1].start() if index + 1 < len(headings) else len(criteria_section)
+            block = criteria_section[heading.end():block_end]
+            score = score_pattern.search(block)
+            if not score:
+                continue
+            description = score_pattern.sub("", block).strip()
+            description = description.split("Чтобы решить это задание", 1)[0].strip()
+            description = re.sub(r"\s+", " ", description)
+            name = heading.group("name").strip()
             criteria.append(
                 Criterion(
-                    name=match.group("name").strip(),
+                    name=name,
                     description=description,
-                    max_points=float(match.group("max_points").replace(",", ".")),
+                    max_points=float(score.group("max_points").replace(",", ".")),
                 )
             )
         return criteria
@@ -141,6 +168,19 @@ class TaskParser:
         instructions = content.split("Содержание задания:", 1)[1].split("Критерии оценивания", 1)[0]
         steps = re.split(r"(?=\n[1-9]\d*\.\s)", instructions)
         return [re.sub(r"\s+", " ", step).strip() for step in steps if re.match(r"\s*[1-9]\d*\.\s", step)]
+
+    @staticmethod
+    def _fallback_title(content: str, task_id: str) -> str:
+        for line in content.splitlines():
+            normalized = line.strip()
+            if normalized and ("ДЗ" in normalized or "задание" in normalized.lower()):
+                return normalized
+        return task_id
+
+    @staticmethod
+    def _fallback_description(content: str) -> str:
+        match = re.search(r"Цель домашнего задания:\s*(.*?)(?:\n|$)", content, re.IGNORECASE)
+        return match.group(1).strip() if match else "Описание задания извлечено из исходного документа."
 
     @staticmethod
     def _table_to_markdown(table: list[list[str | None]]) -> str:
