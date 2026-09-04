@@ -80,7 +80,7 @@ def log_stdout(commits: list[dict[str, str]]) -> bytes:
 async def test_extract_returns_commits_and_file_tree(git: GitHarness) -> None:
     """Полная история: список CommitInfo в порядке git log + дерево файлов."""
     git.enqueue(FakeGitProcess(stdout=log_stdout([COMMIT_2, COMMIT_1])))
-    git.enqueue(FakeGitProcess(stdout="lru.py\nREADME.md\n".encode("utf-8")))
+    git.enqueue(FakeGitProcess(stdout=b"lru.py\nREADME.md\n"))
     commits, file_tree = await GitMetadataExtractor().extract(REPO)
     assert commits == [CommitInfo(**COMMIT_2), CommitInfo(**COMMIT_1)]
     assert file_tree == ["lru.py", "README.md"]

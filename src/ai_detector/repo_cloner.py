@@ -123,7 +123,7 @@ class RepoCloner:
             try:
                 # asyncio.TimeoutError — отдельный класс на Python 3.10 (алиас с 3.11).
                 _stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=CLONE_TIMEOUT_SECONDS)
-            except (TimeoutError, asyncio.TimeoutError):
+            except (TimeoutError, asyncio.TimeoutError):  # noqa: UP041 — на Python 3.10 (requires-python) это разные классы
                 process.kill()
                 await process.wait()
                 raise RepoCloneError(

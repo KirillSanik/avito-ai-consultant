@@ -187,7 +187,7 @@ async def test_token_absent_from_error_message_when_git_output_contains_it(
     stderr = (
         f"fatal: unable to access 'https://x-access-token:{TOKEN}@github.com/owner/private-repo.git/': "
         "The requested URL returned error: 403\n"
-    ).encode("utf-8")
+    ).encode()
     cloner.enqueue(FakeGitProcess(returncode=128, stderr=stderr))
     with pytest.raises(RepoCloneError) as exc_info:
         async with RepoCloner().clone(PRIVATE_URL):
@@ -250,9 +250,8 @@ async def test_temp_dir_path_masked_in_error_message(
     cloner: ClonerHarness, clean_token_env: pytest.MonkeyPatch, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """public-api.md §3: путь к temp-каталогу из stderr маскируется в сообщении об ошибке."""
-    from types import SimpleNamespace
-
     import tempfile as _tempfile
+    from types import SimpleNamespace
 
     holder: dict[str, str] = {}
 
@@ -261,7 +260,7 @@ async def test_temp_dir_path_masked_in_error_message(
         stderr = (
             f"Cloning into '{temp_name}/repo'...\n"
             f"fatal: unable to access '{temp_name}/repo/': Connection aborted\n"
-        ).encode("utf-8")
+        ).encode()
         cloner.calls.append(tuple(str(arg) for arg in args))
         process = FakeGitProcess(returncode=128, stderr=stderr)
         cloner.processes.append(process)

@@ -47,7 +47,8 @@ class LocalCodeAggregator:
             raise CodeAggregationError("no supported source files")
         contents = await asyncio.gather(*(self._read_file(repo_path / rel) for rel in relative_paths))
         blocks: list[str] = []
-        for rel, content in zip(relative_paths, contents):
+        # strict=True: списки равной длины по построению (gather по тому же списку путей).
+        for rel, content in zip(relative_paths, contents, strict=True):
             if content is None:
                 continue
             if not content.endswith("\n"):

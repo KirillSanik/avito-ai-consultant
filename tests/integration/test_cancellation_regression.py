@@ -39,7 +39,6 @@ import pytest
 from openai import AsyncOpenAI
 
 from ai_detector import AIDetectionService, CodeAggregationError
-from ai_detector._spawn import spawn_git
 
 TASK_CRITERIA = "Критерии: LRU-кэш с ограничением capacity."
 

@@ -15,9 +15,9 @@ from ai_detector.utils.exceptions import (
 from ai_detector.utils.models import AIAssessmentResult, CommitInfo
 
 __all__ = [
+    "AIAssessmentResult",
     "AIDetectionError",
     "AIDetectionService",
-    "AIAssessmentResult",
     "CodeAggregationError",
     "CommitInfo",
     "LLMJudgementError",
