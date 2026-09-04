@@ -4,15 +4,15 @@
 экспортировано здесь, считается внутренним и может меняться без предупреждения.
 """
 
-from ai_detector.exceptions import (
+from ai_detector.service import AIDetectionService
+from ai_detector.utils.exceptions import (
     AIDetectionError,
     CodeAggregationError,
     LLMJudgementError,
     MetadataExtractionError,
     RepoCloneError,
 )
-from ai_detector.models import AIAssessmentResult, CommitInfo
-from ai_detector.service import AIDetectionService
+from ai_detector.utils.models import AIAssessmentResult, CommitInfo
 
 __all__ = [
     "AIDetectionError",

@@ -10,7 +10,7 @@
 
 from __future__ import annotations
 
-from ai_detector.models import CommitInfo
+from .models import CommitInfo
 
 #: Роль ревьюера и критерии вердикта «Светофора» — дословно из ТЗ §5.
 SYSTEM_PROMPT: str = (

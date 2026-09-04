@@ -16,12 +16,12 @@ from types import SimpleNamespace
 import pytest
 
 from ai_detector.code_aggregator import LocalCodeAggregator
-from ai_detector.exceptions import AIDetectionError, MetadataExtractionError, RepoCloneError
 from ai_detector.git_metadata import GitMetadataExtractor
 from ai_detector.llm_judge import LLMJudge
-from ai_detector.models import AIAssessmentResult, CommitInfo
 from ai_detector.repo_cloner import RepoCloner
 from ai_detector.service import AIDetectionService
+from ai_detector.utils.exceptions import AIDetectionError, MetadataExtractionError, RepoCloneError
+from ai_detector.utils.models import AIAssessmentResult, CommitInfo
 
 REPO_PATH = Path("/tmp/fake-clone") / "repo"
 REPO_URL = "https://github.com/o/r.git"

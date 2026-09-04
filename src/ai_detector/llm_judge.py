@@ -21,9 +21,9 @@ from openai import (
 )
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
-from .exceptions import LLMJudgementError
-from .models import AIAssessmentResult, CommitInfo
-from .prompts import SYSTEM_PROMPT, USER_PROMPT_TEMPLATE, format_commit_history, format_file_tree
+from .utils.exceptions import LLMJudgementError
+from .utils.models import AIAssessmentResult, CommitInfo
+from .utils.prompts import SYSTEM_PROMPT, USER_PROMPT_TEMPLATE, format_commit_history, format_file_tree
 
 logger = logging.getLogger(__name__)
 

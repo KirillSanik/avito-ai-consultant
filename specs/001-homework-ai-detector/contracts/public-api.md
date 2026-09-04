@@ -7,8 +7,8 @@
 
 ```python
 from ai_detector.service import AIDetectionService
-from ai_detector.models import AIAssessmentResult, CommitInfo
-from ai_detector.exceptions import (
+from ai_detector.utils.models import AIAssessmentResult, CommitInfo
+from ai_detector.utils.exceptions import (
     AIDetectionError,
     RepoCloneError,
     MetadataExtractionError,

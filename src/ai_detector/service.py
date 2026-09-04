@@ -9,8 +9,8 @@ from openai import AsyncOpenAI
 from .code_aggregator import LocalCodeAggregator
 from .git_metadata import GitMetadataExtractor
 from .llm_judge import LLMJudge
-from .models import AIAssessmentResult
 from .repo_cloner import RepoCloner
+from .utils.models import AIAssessmentResult
 
 
 class AIDetectionService:

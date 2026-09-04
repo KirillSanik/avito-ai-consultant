@@ -13,8 +13,8 @@ from pathlib import Path
 import pytest
 
 import ai_detector.repo_cloner as repo_cloner_module
-from ai_detector.exceptions import RepoCloneError
 from ai_detector.repo_cloner import RepoCloner
+from ai_detector.utils.exceptions import RepoCloneError
 
 REPO_URL = "https://github.com/owner/repo.git"
 PRIVATE_URL = "https://github.com/owner/private-repo.git"

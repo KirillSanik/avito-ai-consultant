@@ -10,9 +10,9 @@ from pathlib import Path
 
 import pytest
 
-from ai_detector.exceptions import MetadataExtractionError
 from ai_detector.git_metadata import GitMetadataExtractor
-from ai_detector.models import CommitInfo
+from ai_detector.utils.exceptions import MetadataExtractionError
+from ai_detector.utils.models import CommitInfo
 
 REPO = Path("/tmp/fake-clone") / "repo"
 

@@ -17,8 +17,8 @@ from __future__ import annotations
 from pathlib import Path
 
 from ._spawn import spawn_git
-from .exceptions import MetadataExtractionError
-from .models import CommitInfo
+from .utils.exceptions import MetadataExtractionError
+from .utils.models import CommitInfo
 
 #: Разделитель полей в строке истории: байт unit separator (``%x1f`` в pretty-format git).
 _FIELD_SEPARATOR = "\x1f"

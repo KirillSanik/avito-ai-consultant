@@ -20,7 +20,7 @@ from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
 
 from ._spawn import spawn_git
-from .exceptions import RepoCloneError
+from .utils.exceptions import RepoCloneError
 
 #: Ограничение времени клонирования, секунд (ТЗ §4.2).
 CLONE_TIMEOUT_SECONDS = 120

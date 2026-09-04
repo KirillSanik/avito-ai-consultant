@@ -160,3 +160,4 @@ src/.env
 .env/
 # uv
 .uv-cache/
+demo/

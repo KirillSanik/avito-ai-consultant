@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from ai_detector.models import AIAssessmentResult, CommitInfo
+from ai_detector.utils.models import AIAssessmentResult, CommitInfo
 
 VALID_COMMIT: dict[str, str] = {
     "hash": "ab12" * 10,

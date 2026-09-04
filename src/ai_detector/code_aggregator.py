@@ -13,7 +13,7 @@ from pathlib import Path
 
 import aiofiles
 
-from .exceptions import CodeAggregationError
+from .utils.exceptions import CodeAggregationError
 
 logger = logging.getLogger(__name__)
 

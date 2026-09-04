@@ -15,7 +15,7 @@ import pytest
 
 import ai_detector.code_aggregator as code_aggregator_module
 from ai_detector.code_aggregator import LocalCodeAggregator
-from ai_detector.exceptions import CodeAggregationError
+from ai_detector.utils.exceptions import CodeAggregationError
 
 
 def write(root: Path, rel: str, content: str = "x") -> None:
