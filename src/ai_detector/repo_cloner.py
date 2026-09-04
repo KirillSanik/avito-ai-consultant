@@ -12,8 +12,10 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import tempfile
+import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -21,6 +23,8 @@ from urllib.parse import urlsplit, urlunsplit
 
 from ._spawn import spawn_git
 from .utils.exceptions import RepoCloneError
+
+logger = logging.getLogger(__name__)
 
 #: Ограничение времени клонирования, секунд (ТЗ §4.2).
 CLONE_TIMEOUT_SECONDS = 120
@@ -109,12 +113,15 @@ class RepoCloner:
     async def clone(self, repo_url: str) -> AsyncIterator[Path]:
         token = _git_token_from_env()
         clone_url = _inject_token(repo_url, token)
+        clone_started = time.perf_counter()
+        logger.debug("Создание temp-каталога и запуск git clone…")
         temp_dir = tempfile.TemporaryDirectory(prefix="ai-detector-")
         try:
             repo_path = Path(temp_dir.name) / "repo"
             try:
                 process = await spawn_git("git", "clone", clone_url, str(repo_path))
             except OSError as exc:
+                logger.error("git clone: не удалось запустить git для %s", repo_url)
                 raise RepoCloneError(
                     f"Не удалось запустить git для клонирования {repo_url} "
                     "(проверьте, что git CLI установлен и доступен в PATH): "
@@ -132,7 +139,11 @@ class RepoCloner:
                 ) from None
             returncode = process.returncode
             if returncode != 0:
+                logger.error("git clone %s завершился с кодом %d за %.3f с", repo_url, returncode, time.perf_counter() - clone_started)
                 raise RepoCloneError(_clone_failure_message(repo_url, _stderr_tail(stderr), token, temp_dir.name))
+            logger.info("git clone %s выполнен за %.3f с", repo_url, time.perf_counter() - clone_started)
             yield repo_path
         finally:
+            cleanup_started = time.perf_counter()
             temp_dir.cleanup()
+            logger.debug("Temp-каталог удалён за %.3f с", time.perf_counter() - cleanup_started)

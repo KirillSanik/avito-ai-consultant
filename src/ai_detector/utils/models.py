@@ -61,29 +61,36 @@ class CommitInfo(BaseModel):
 
 
 class AIAssessmentResult(BaseModel):
-    """Итоговый вердикт «Светофора» по вероятности AI-генерации кода.
-
-    Единственная сущность, возвращаемая `AIDetectionService.analyze` наружу.
-    Полных пяти полей, ничего лишнего (SC-002, FR-009).
-    """
+    """Итоговый вердикт «Светофора» по вероятности AI-генерации кода."""
 
     model_config = ConfigDict(extra="ignore")
 
-    status: Literal["green", "yellow", "red"] = Field(
-        description="Вердикт: 'green' (человек), 'yellow' (смешанный/подозрительный), 'red' (явный ИИ/копипаст)"
-    )
-    confidence: float = Field(
-        ge=0.0,
-        le=1.0,
-        description="Уверенность модели в вердикте от 0.0 до 1.0",
-    )
-    reasoning: str = Field(
-        min_length=1,
-        description="Подробное, аргументированное обоснование вердикта на русском языке",
-    )
     ai_indicators: list[str] = Field(
         description="Список конкретных признаков, указывающих на генерацию ИИ",
     )
     human_indicators: list[str] = Field(
         description="Список признаков, указывающих на человеческую работу",
     )
+    
+    reasoning: str = Field(
+        min_length=1,
+        description="Подробное, аргументированное обоснование вердикта на русском языке. "
+                    "Сначала взвесь аргументы за и против, затем сделай вывод.",
+    )
+    
+    status: Literal["green", "yellow", "red"] = Field(
+        description="Итоговый вердикт на основе reasoning: 'green' (человек), 'yellow' (смешанный/подозрительный), 'red' (явный ИИ/копипаст)"
+    )
+    confidence: float = Field(
+        ge=0.0,
+        le=1.0,
+        description="Уверенность модели в итоговом вердикте от 0.0 до 1.0",
+    )
+
+    @field_validator("status", mode="before")
+    @classmethod
+    def _normalize_status(cls, value: object) -> object:
+        """Допускает любой регистр статуса от модели ('GREEN'/'Green'), приводит к нижнему."""
+        if isinstance(value, str):
+            return value.lower()
+        return value

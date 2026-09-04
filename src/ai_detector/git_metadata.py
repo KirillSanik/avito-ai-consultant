@@ -14,11 +14,15 @@ subject практически невозможен; при его наличи�
 
 from __future__ import annotations
 
+import logging
+import time
 from pathlib import Path
 
 from ._spawn import spawn_git
 from .utils.exceptions import MetadataExtractionError
 from .utils.models import CommitInfo
+
+logger = logging.getLogger(__name__)
 
 #: Разделитель полей в строке истории: байт unit separator (``%x1f`` в pretty-format git).
 _FIELD_SEPARATOR = "\x1f"
@@ -58,11 +62,15 @@ class GitMetadataExtractor:
 
     async def extract(self, repo_path: Path) -> tuple[list[CommitInfo], list[str]]:
         """Полная история коммитов (merge-коммиты исключены) + список файлов из индекса git."""
+        extract_started = time.perf_counter()
         commits = await self._extract_commits(repo_path)
         file_tree = await self._extract_file_tree(repo_path)
+        logger.info("Метаданные извлечены за %.3f с: коммитов=%d, файлов=%d", time.perf_counter() - extract_started, len(commits), len(file_tree))
         return commits, file_tree
 
     async def _extract_commits(self, repo_path: Path) -> list[CommitInfo]:
+        logger.debug("git log: извлечение истории коммитов…")
+        step_started = time.perf_counter()
         returncode, stdout, stderr = await _run_git(repo_path, "log", COMMIT_LOG_FORMAT, "--no-merges")
         if returncode != 0:
             if returncode == 128 and "does not have any commits yet" in stderr.decode("utf-8", errors="replace"):
@@ -71,6 +79,7 @@ class GitMetadataExtractor:
         try:
             stdout_text = stdout.decode("utf-8")
         except UnicodeDecodeError as exc:
+            logger.error("git log: история коммитов не в UTF-8")
             raise MetadataExtractionError(
                 "История коммитов содержит байты вне UTF-8 и не может быть разобрана"
             ) from exc
@@ -85,13 +94,19 @@ class GitMetadataExtractor:
                     f"Не удалось разобрать историю коммитов: строка {line_number} "
                     f"не соответствует схеме CommitInfo"
                 ) from exc
+        logger.debug("git log: разобрано %d коммитов за %.3f с", len(commits), time.perf_counter() - step_started)
         return commits
 
     async def _extract_file_tree(self, repo_path: Path) -> list[str]:
+        logger.debug("git ls-files: извлечение дерева файлов…")
+        step_started = time.perf_counter()
         returncode, stdout, stderr = await _run_git(repo_path, "ls-files")
         if returncode != 0:
+            logger.error("git ls-files завершился с кодом %d", returncode)
             raise MetadataExtractionError(_git_error_detail(returncode, "git ls-files", stderr))
-        return [line.strip() for line in stdout.decode("utf-8").splitlines() if line.strip()]
+        file_tree = [line.strip() for line in stdout.decode("utf-8").splitlines() if line.strip()]
+        logger.debug("git ls-files: %d файлов за %.3f с", len(file_tree), time.perf_counter() - step_started)
+        return file_tree
 
 
 def _parse_commit_line(line: str) -> CommitInfo:

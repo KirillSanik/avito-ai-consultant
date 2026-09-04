@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 
 from openai import (
     APIConnectionError,
@@ -54,10 +55,21 @@ class LLMJudge:
             commit_history_formatted=format_commit_history(commits),
             full_code=full_code,
         )
+        logger.debug(
+            "LLM-оценка: промпт собран (символов=%d: коммитов=%d, файлов=%d, кода=%d)",
+            len(user_prompt),
+            len(commits),
+            len(file_tree),
+            len(full_code),
+        )
+        evaluate_started = time.perf_counter()
         try:
-            return await self._request(user_prompt)
+            result = await self._request(user_prompt)
         except _TransientLLMError as exc:
+            logger.error("LLM-оценка не удалась за %.3f с: %s", time.perf_counter() - evaluate_started, exc)
             raise LLMJudgementError(f"{exc} Лимит повторов исчерпан: {self.MAX_ATTEMPTS} попыток.") from exc
+        logger.info("LLM-запрос выполнен за %.3f с", time.perf_counter() - evaluate_started)
+        return result
 
     @retry(
         retry=retry_if_exception_type(_TransientLLMError),
@@ -67,6 +79,9 @@ class LLMJudge:
     )
     async def _request(self, user_prompt: str) -> AIAssessmentResult:
         """Один запрос ``beta.chat.completions.parse`` с контрактом исключений."""
+        attempt_started = time.perf_counter()
+        attempt_number = getattr(self._request.retry.statistics, "attempt_number", 1) if hasattr(self._request, "retry") else 1
+        logger.debug("LLM-запрос к модели «%s» (попытка %d)…", self._model, attempt_number)
         try:
             response = await self._client.beta.chat.completions.parse(
                 model=self._model,
@@ -78,16 +93,21 @@ class LLMJudge:
                 response_format=AIAssessmentResult,
             )
         except APITimeoutError as exc:
+            logger.error("LLM-запрос: таймаут после %.3f с", time.perf_counter() - attempt_started)
             raise _TransientLLMError(f"LLM: таймаут запроса ({exc})") from exc
         except APIConnectionError as exc:
+            logger.error("LLM-запрос: ошибка соединения после %.3f с", time.perf_counter() - attempt_started)
             raise _TransientLLMError(f"LLM: не удалось подключиться к локальному LLM-серверу ({exc})") from exc
         except RateLimitError as exc:
+            logger.error("LLM-запрос: 429 после %.3f с", time.perf_counter() - attempt_started)
             raise _TransientLLMError(f"LLM: превышен лимит запросов ({exc})") from exc
         except NotFoundError as exc:
+            logger.error("LLM-запрос: модель «%s» не найдена (404)", self._model)
             raise LLMJudgementError(
                 f"LLM: модель «{self._model}» не найдена (404); проверьте AI_DETECTOR_LLM_MODEL ({exc})"
             ) from exc
         except APIStatusError as exc:
+            logger.error("LLM-запрос: статус %d после %.3f с", exc.status_code, time.perf_counter() - attempt_started)
             if exc.status_code >= 500:
                 raise _TransientLLMError(f"LLM: серверная ошибка ({exc.status_code})") from exc
             if exc.status_code == 400 and "context" in str(exc).lower():
@@ -98,5 +118,7 @@ class LLMJudge:
             raise LLMJudgementError(f"LLM: ошибка запроса ({exc.status_code})") from exc
         parsed = response.choices[0].message.parsed
         if parsed is None:
+            logger.error("LLM-запрос: parsed=None после %.3f с", time.perf_counter() - attempt_started)
             raise _TransientLLMError("LLM не вернула структурированное решение (parsed=None)")
+        logger.debug("LLM-запрос: успешная попытка за %.3f с", time.perf_counter() - attempt_started)
         return parsed  # type: ignore[return-value]  # SDK типизировал parsed как Any; контракт — pydantic-объект

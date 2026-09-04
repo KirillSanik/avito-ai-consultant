@@ -9,6 +9,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import time
+import time
 from pathlib import Path
 
 import aiofiles
@@ -31,6 +33,7 @@ class LocalCodeAggregator:
     """Собирает весь исходный код репозитория в одну строку с маркерами файлов."""
 
     def __init__(self, max_concurrent_reads: int = MAX_CONCURRENT_READS) -> None:
+        self._max_concurrent_reads = max_concurrent_reads
         self._semaphore = asyncio.Semaphore(max_concurrent_reads)
 
     async def aggregate(self, repo_path: Path) -> str:
@@ -38,13 +41,17 @@ class LocalCodeAggregator:
 
         Блоки ``--- FILE: <path> --- ... --- END FILE ---`` соединены пустой строкой.
         """
+        aggregate_started = time.perf_counter()
         try:
             # Блокирующий обход дерева (rglob/stat) — вне event loop.
             relative_paths = await asyncio.to_thread(self._collect_files, repo_path)
         except OSError as exc:
+            logger.error("Агрегация: не удалось перечислить файлы репозитория")
             raise CodeAggregationError(f"Не удалось перечислить файлы репозитория: {exc}") from exc
         if not relative_paths:
+            logger.error("Агрегация: поддерживаемых исходных файлов не найдено")
             raise CodeAggregationError("no supported source files")
+        logger.debug("Агрегация: чтение %d файлов (параллельно до %d)…", len(relative_paths), self._max_concurrent_reads)
         contents = await asyncio.gather(*(self._read_file(repo_path / rel) for rel in relative_paths))
         blocks: list[str] = []
         # strict=True: списки равной длины по построению (gather по тому же списку путей).
@@ -55,8 +62,16 @@ class LocalCodeAggregator:
                 content += "\n"
             blocks.append(f"--- FILE: {rel} ---\n{content}--- END FILE ---")
         if not blocks:
+            logger.error("Агрегация: ни один поддерживаемый файл не прочитан как UTF-8")
             raise CodeAggregationError("ни один поддерживаемый файл не удалось прочитать как текст UTF-8")
-        return "\n\n".join(blocks)
+        result = "\n\n".join(blocks)
+        logger.info(
+            "Агрегация кода завершена за %.3f с: файлов=%d, объём=%d символов",
+            time.perf_counter() - aggregate_started,
+            len(blocks),
+            len(result),
+        )
+        return result
 
     def _collect_files(self, repo_path: Path) -> list[str]:
         """Отсортированные относительные пути поддерживаемых файлов (белый/чёрный списки, FR-005).
