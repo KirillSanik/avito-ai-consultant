@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from pathlib import Path
 
 import instructor
@@ -28,7 +29,6 @@ from homework_reviewer.parsers.submission_parser import SubmissionParser
 logger = logging.getLogger(__name__)
 
 #: Параметры LLM-запроса покритериальной оценки (сохранены из прежней реализации).
-DEFAULT_MAX_TOKENS = 2600
 DEFAULT_TIMEOUT_SECONDS = 300.0
 DEFAULT_MAX_RETRIES = 1
 
@@ -117,7 +117,7 @@ class GradingEngine:
         """Один запрос instructor (JSON-режим) к указанной модели; ошибки пробрасываются как есть."""
         settings = self.settings
         request_options: dict[str, object] = {
-            "max_tokens": DEFAULT_MAX_TOKENS,
+            "max_tokens": settings.llm_max_tokens,
             "response_model": CriterionResult,
             "max_retries": DEFAULT_MAX_RETRIES,
             "timeout": DEFAULT_TIMEOUT_SECONDS,
@@ -126,17 +126,34 @@ class GradingEngine:
                 {"role": "user", "content": user_prompt},
             ],
         }
-        if settings.ollama_extra_body:
-            request_options["extra_body"] = settings.ollama_extra_body
+        if settings.chat_extra_body:
+            request_options["extra_body"] = settings.chat_extra_body
         return await self._client.chat.completions.create(model=model, **request_options)
 
     async def evaluate_submission(self, rubric: TaskRubric, submission_data: SubmissionData) -> EvaluationReport:
-        """Последовательная оценка всех критериев; в storage отчёт не сохраняется."""
-        criterion_results: list[CriterionResult] = []
-        for index, criterion in enumerate(rubric.criteria, start=1):
-            logger.info("Оценивается критерий %d/%d: %s", index, len(rubric.criteria), criterion.name)
+        """Оценка всех критериев параллельно (LLM-вызовы независимы); в storage отчёт не сохраняется.
+
+        Сбой одного критерия отменяет остальные (как в ``core.pipeline``) —
+        частичный отчёт не возвращается.
+        """
+        criteria = list(rubric.criteria)
+        logger.info("Параллельная оценка %d критериев…", len(criteria))
+
+        async def _one(index: int, criterion: Criterion) -> CriterionResult:
+            started = time.perf_counter()
+            logger.info("Оценивается критерий %d/%d: %s", index, len(criteria), criterion.name)
             result = await self.evaluate_criterion(criterion, rubric, submission_data)
-            criterion_results.append(result.model_copy(update={"criterion_id": f"criterion-{index}"}))
+            logger.info("Критерий %d/%d оценён за %.1f с", index, len(criteria), time.perf_counter() - started)
+            return result.model_copy(update={"criterion_id": f"criterion-{index}"})
+
+        tasks = [asyncio.create_task(_one(i, c)) for i, c in enumerate(criteria, start=1)]
+        try:
+            criterion_results = list(await asyncio.gather(*tasks))
+        except BaseException:
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            raise
         total_score = sum(result.assigned_score for result in criterion_results)
         max_total_score = sum(result.max_points for result in criterion_results)
         return EvaluationReport(

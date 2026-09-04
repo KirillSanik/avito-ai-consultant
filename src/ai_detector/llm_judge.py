@@ -16,6 +16,7 @@ import time
 from openai import APIStatusError, AsyncOpenAI
 
 from common.llm import (
+    OPENROUTER_FREE_MODELS,
     LLMRequestError,
     LLMResilienceError,
     LLMTransientError,
@@ -24,6 +25,7 @@ from common.llm import (
 )
 from common.models import AIAssessmentResult, CommitInfo
 from common.prompts import SYSTEM_PROMPT, USER_PROMPT_TEMPLATE, format_commit_history, format_file_tree
+from common.settings import get_settings
 
 from .utils.exceptions import LLMJudgementError
 
@@ -43,6 +45,12 @@ class LLMJudge:
         # Окружение читается при каждом обращении (сохранено поведение прежнего
         # common.config.llm_model; кешированные Settings не подходят).
         self._model = model or os.getenv("AI_DETECTOR_LLM_MODEL") or DEFAULT_LLM_MODEL
+        provider = os.getenv("AI_DETECTOR_LLM_PROVIDER", "local")
+        self._model_chain: tuple[str, ...] = (
+            tuple(dict.fromkeys((self._model, *OPENROUTER_FREE_MODELS)))
+            if provider == "openrouter"
+            else (self._model,)
+        )
 
     async def evaluate(
         self, task_criteria: str, file_tree: list[str], commits: list[CommitInfo], full_code: str
@@ -65,7 +73,7 @@ class LLMJudge:
         try:
             result = await call_with_resilience(
                 lambda model: self._parse_once(model, user_prompt),
-                (self._model,),
+                self._model_chain,
                 max_attempts=self.MAX_ATTEMPTS,
                 inter_request_delay=0.0,
             )
@@ -98,6 +106,7 @@ class LLMJudge:
                 ],
                 temperature=0,
                 response_format=AIAssessmentResult,
+                extra_body=get_settings().chat_extra_body,
             )
         except APIStatusError as exc:
             # Переполнение контекста — фатальная ошибка с особым сообщением (без повторов):
