@@ -73,7 +73,7 @@ class AIAssessmentResult(BaseModel):
     )
     
     reasoning: str = Field(
-        min_length=1,
+        min_length=50,
         description="Подробное, аргументированное обоснование вердикта на русском языке. "
                     "Сначала взвесь аргументы за и против, затем сделай вывод.",
     )
