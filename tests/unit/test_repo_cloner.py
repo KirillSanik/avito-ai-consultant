@@ -25,6 +25,7 @@ class FakeGitProcess:
     """Имитация асинхронного subprocess: communicate() / wait() / kill()."""
 
     def __init__(self, returncode: int = 0, stderr: bytes = b"", hang: bool = False) -> None:
+        self.returncode = returncode
         self._returncode = returncode
         self._stderr = stderr
         self._hang = hang

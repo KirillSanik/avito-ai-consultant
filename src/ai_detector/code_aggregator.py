@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from pathlib import Path
 
 import aiofiles
@@ -38,7 +39,8 @@ class LocalCodeAggregator:
         Блоки ``--- FILE: <path> --- ... --- END FILE ---`` соединены пустой строкой.
         """
         try:
-            relative_paths = self._collect_files(repo_path)
+            # Блокирующий обход дерева (rglob/stat) — вне event loop.
+            relative_paths = await asyncio.to_thread(self._collect_files, repo_path)
         except OSError as exc:
             raise CodeAggregationError(f"Не удалось перечислить файлы репозитория: {exc}") from exc
         if not relative_paths:
@@ -48,23 +50,28 @@ class LocalCodeAggregator:
         for rel, content in zip(relative_paths, contents):
             if content is None:
                 continue
+            if not content.endswith("\n"):
+                content += "\n"
             blocks.append(f"--- FILE: {rel} ---\n{content}--- END FILE ---")
         if not blocks:
             raise CodeAggregationError("ни один поддерживаемый файл не удалось прочитать как текст UTF-8")
         return "\n\n".join(blocks)
 
     def _collect_files(self, repo_path: Path) -> list[str]:
-        """Отсортированные относительные пути поддерживаемых файлов (белый/чёрный списки, FR-005)."""
+        """Отсортированные относительные пути поддерживаемых файлов (белый/чёрный списки, FR-005).
+
+        Обход — ``os.walk`` с обрезкой исключённых директорий: в ``node_modules``/``venv``
+        и т.п. не спускаемся вовсе (в отличие от наивного ``rglob`` с пост-фильтром).
+        """
         relative_paths: list[str] = []
-        for path in repo_path.rglob("*"):
-            if not path.is_file():
-                continue
-            if path.suffix.lower() not in SUPPORTED_EXTENSIONS:
-                continue
-            parts = path.relative_to(repo_path).parts
-            if any(part in EXCLUDED_DIRS for part in parts):
-                continue
-            relative_paths.append(path.relative_to(repo_path).as_posix())
+        for dirpath, dirnames, filenames in os.walk(repo_path):
+            # Фильтруем dirnames in-place — os.walk не спустится в отсечённые каталоги.
+            dirnames[:] = [d for d in dirnames if d not in EXCLUDED_DIRS]
+            for filename in filenames:
+                if Path(filename).suffix.lower() not in SUPPORTED_EXTENSIONS:
+                    continue
+                full_path = Path(dirpath) / filename
+                relative_paths.append(full_path.relative_to(repo_path).as_posix())
         return sorted(relative_paths)
 
     async def _read_file(self, file_path: Path) -> str | None:

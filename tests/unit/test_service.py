@@ -205,6 +205,8 @@ async def test_network_failure_mid_clone_raises_domain_error_and_cleans_temp(
     """Сетевой сбой в середине клонирования → RepoCloneError (иерархия AIDetectionError) + нет остатков temp (FR-010, FR-013)."""
 
     class FailingCloneProcess:
+        returncode = 128
+
         async def communicate(self) -> tuple[bytes, bytes]:
             return b"", b"fatal: unable to access 'https://github.com/o/r.git/': Could not resolve host\n"
 

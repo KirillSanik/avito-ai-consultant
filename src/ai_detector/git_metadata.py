@@ -44,8 +44,7 @@ async def _run_git(repo_path: Path, *args: str) -> tuple[int, bytes, bytes]:
             f"{exc}"
         ) from exc
     stdout, stderr = await process.communicate()
-    returncode = await process.wait()
-    return returncode, stdout, stderr
+    return process.returncode, stdout, stderr
 
 
 def _git_error_detail(returncode: int, command: str, stderr: bytes) -> str:
@@ -69,8 +68,14 @@ class GitMetadataExtractor:
             if returncode == 128 and "does not have any commits yet" in stderr.decode("utf-8", errors="replace"):
                 return []
             raise MetadataExtractionError(_git_error_detail(returncode, "git log", stderr))
+        try:
+            stdout_text = stdout.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise MetadataExtractionError(
+                "История коммитов содержит байты вне UTF-8 и не может быть разобрана"
+            ) from exc
         commits: list[CommitInfo] = []
-        for line_number, line in enumerate(stdout.decode("utf-8").splitlines(), start=1):
+        for line_number, line in enumerate(stdout_text.splitlines(), start=1):
             if not line.strip():
                 continue
             try:

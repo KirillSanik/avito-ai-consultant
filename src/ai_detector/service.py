@@ -34,8 +34,16 @@ class AIDetectionService:
         (включая исключения и отмены) — FR-010, SC-004.
         """
         async with self._cloner.clone(repo_url) as repo_path:
-            (commits, file_tree), full_code = await asyncio.gather(
-                self._extractor.extract(repo_path),
-                self._aggregator.aggregate(repo_path),
-            )
+            metadata_task = asyncio.create_task(self._extractor.extract(repo_path))
+            code_task = asyncio.create_task(self._aggregator.aggregate(repo_path))
+            try:
+                (commits, file_tree), full_code = await asyncio.gather(metadata_task, code_task)
+            except BaseException:
+                # Без отмены «собрата» он продолжил бы читать файлы после выхода
+                # из контекста клона (temp-каталог уже удалён) — гонка и
+                # «exception was never retrieved» в event loop.
+                for task in (metadata_task, code_task):
+                    task.cancel()
+                await asyncio.gather(metadata_task, code_task, return_exceptions=True)
+                raise
         return await self._judge.evaluate(task_criteria, file_tree, commits, full_code)

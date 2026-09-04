@@ -121,15 +121,16 @@ class RepoCloner:
                     f"{exc}"
                 ) from exc
             try:
+                # asyncio.TimeoutError — отдельный класс на Python 3.10 (алиас с 3.11).
                 _stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=CLONE_TIMEOUT_SECONDS)
-            except TimeoutError:
+            except (TimeoutError, asyncio.TimeoutError):
                 process.kill()
                 await process.wait()
                 raise RepoCloneError(
                     f"Не удалось клонировать репозиторий {repo_url}: операция не завершилась "
                     f"за {CLONE_TIMEOUT_SECONDS} с"
                 ) from None
-            returncode = await process.wait()
+            returncode = process.returncode
             if returncode != 0:
                 raise RepoCloneError(_clone_failure_message(repo_url, _stderr_tail(stderr), token, temp_dir.name))
             yield repo_path

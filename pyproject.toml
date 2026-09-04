@@ -27,7 +27,7 @@ dev = [
 [tool.ruff]
 line-length = 120
 target-version = "py311"
-src = ["src", "main.py"]
+src = ["src"]
 exclude = [".venv", "alembic", "tests"]
 
 [tool.ruff.lint]

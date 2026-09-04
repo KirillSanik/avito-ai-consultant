@@ -19,7 +19,6 @@ from openai import (
     NotFoundError,
     RateLimitError,
 )
-from openai.types.chat import ChatCompletion
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
 from .exceptions import LLMJudgementError
@@ -62,7 +61,7 @@ class LLMJudge:
 
     @retry(
         retry=retry_if_exception_type(_TransientLLMError),
-        stop=stop_after_attempt(3),
+        stop=stop_after_attempt(MAX_ATTEMPTS),
         wait=wait_exponential(multiplier=1, min=1, max=10),
         reraise=True,
     )
