@@ -107,10 +107,8 @@ async def _settle_spawn_task(
         # exit-waiter никогда не разрешится. Второй ``cancel()`` отменяет
         # exit-waiter и освобождает задачу запуска (см. модульную преамбулу).
         spawn_task.cancel()
-        try:
+        with suppress(BaseException):
             await asyncio.shield(spawn_task)
-        except BaseException:
-            pass
         return None
     if spawn_task.cancelled():
         return None
@@ -136,7 +134,5 @@ async def _reap_spawn_task(spawn_task: asyncio.Task[asyncio.subprocess.Process])
         return
     if process is not None:
         process.kill()
-        try:
+        with suppress(BaseException):
             await asyncio.wait_for(process.wait(), timeout=SPAWN_SETTLE_TIMEOUT_SECONDS)
-        except BaseException:
-            pass

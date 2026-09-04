@@ -3,9 +3,9 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "ai-detector"
+name = "avito-ai-consultant"
 version = "0.1.0"
-description = "Асинхронный модуль детекции AI-генерации кода в репозиториях с решениями домашних заданий"
+description = "Avito AI Consultant: детекция AI-генерации кода (ai_detector) и 3-этапный ревьюер домашних заданий (homework_reviewer)"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
@@ -13,15 +13,31 @@ dependencies = [
     "openai>=1.40",
     "aiofiles",
     "tenacity",
-    "httpx",
+    "instructor>=1.0",
+    "click>=8.0",
+    "requests>=2.31",
+    "beautifulsoup4>=4.12",
+    "python-docx>=1.0",
+    "openpyxl>=3.1",
+    "pdfplumber>=0.10",
+    "python-dotenv>=1.0",
+    "reportlab>=4.0",
 ]
+
+[project.scripts]
+homework-reviewer = "homework_reviewer.cli:cli"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/ai_detector", "src/homework_reviewer"]
 
 [dependency-groups]
 dev = [
     "greenlet>=3.5.5",
+    "httpx>=0.28.1",
     "pytest",
     "pytest-asyncio",
     "pytest-cov",
+    "ruff==0.15.14",
 ]
 
 [tool.ruff]
@@ -53,7 +69,7 @@ ignore = [
 ]
 
 [tool.ruff.lint.isort]
-known-first-party = ["ai_detector"]
+known-first-party = ["ai_detector", "homework_reviewer"]
 
 [tool.mypy]
 python_version = "3.11"

@@ -71,13 +71,13 @@ class AIAssessmentResult(BaseModel):
     human_indicators: list[str] = Field(
         description="Список признаков, указывающих на человеческую работу",
     )
-    
+
     reasoning: str = Field(
         min_length=50,
         description="Подробное, аргументированное обоснование вердикта на русском языке. "
                     "Сначала взвесь аргументы за и против, затем сделай вывод.",
     )
-    
+
     status: Literal["green", "yellow", "red"] = Field(
         description="Итоговый вердикт на основе reasoning: 'green' (человек), 'yellow' (смешанный/подозрительный), 'red' (явный ИИ/копипаст)"
     )
