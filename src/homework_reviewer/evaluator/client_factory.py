@@ -1,7 +1,7 @@
 import instructor
 from openai import OpenAI
 
-from homework_reviewer.config import AppConfig
+from common.config import AppConfig
 
 
 def get_instructor_client(config: AppConfig):

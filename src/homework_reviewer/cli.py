@@ -2,7 +2,7 @@ from pathlib import Path
 
 import click
 
-from homework_reviewer.config import AppConfig
+from common.config import AppConfig
 from homework_reviewer.evaluator.grading_engine import GradingEngine
 from homework_reviewer.parsers.submission_parser import SubmissionParser
 from homework_reviewer.parsers.task_parser import TaskParser

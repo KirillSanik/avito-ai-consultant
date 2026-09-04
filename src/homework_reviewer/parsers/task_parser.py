@@ -7,7 +7,7 @@ from instructor.core import InstructorRetryException
 from openai import APIConnectionError, APIError, APITimeoutError
 from pydantic import BaseModel, Field
 
-from homework_reviewer.config import AppConfig
+from common.config import AppConfig
 from homework_reviewer.evaluator.client_factory import get_instructor_client
 from homework_reviewer.models.rubric import Constraints, Criterion, TaskRubric
 

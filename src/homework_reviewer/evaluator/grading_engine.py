@@ -4,7 +4,7 @@ import click
 from instructor.core import IncompleteOutputException, InstructorRetryException
 from openai import APIConnectionError, APIError, APITimeoutError
 
-from homework_reviewer.config import AppConfig
+from common.config import AppConfig
 from homework_reviewer.evaluator.client_factory import get_instructor_client
 from homework_reviewer.models.evaluation import CriterionResult, EvaluationReport
 from homework_reviewer.models.rubric import Criterion, TaskRubric
