@@ -9,6 +9,12 @@ __pycache__/
 frontend/node_modules/
 frontend/.next/
 frontend/out/
+student-portal/node_modules/
+student-portal/.next/
+student-portal/out/
+
+"Course Management App/node_modules/"
+"Course Management App/dist/"
 
 backend/dist/
 backend/*.egg-info/

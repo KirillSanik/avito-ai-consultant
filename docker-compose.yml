@@ -6,7 +6,7 @@ services:
       POSTGRES_USER: ai_reviewer
       POSTGRES_PASSWORD: ai_reviewer
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - postgres_data_v2:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ai_reviewer"]
       interval: 5s
@@ -21,6 +21,7 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://ai_reviewer:ai_reviewer@postgres:5432/ai_reviewer
       REDIS_URL: redis://redis:6379/0
+      SEED_DEMO_DATA: "false"
     ports:
       - "8000:8000"
     healthcheck:
@@ -58,5 +59,15 @@ services:
       backend:
         condition: service_healthy
 
+  student-portal:
+    build: ./student-portal
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:8000
+    ports:
+      - "3001:3000"
+    depends_on:
+      backend:
+        condition: service_healthy
+
 volumes:
-  postgres_data:
+  postgres_data_v2:

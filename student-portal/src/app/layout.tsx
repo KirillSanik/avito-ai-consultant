@@ -5,8 +5,8 @@ import { Providers } from "./providers";
 
 
 export const metadata: Metadata = {
-  title: "ReviewDesk",
-  description: "Платформа проверки домашних работ",
+  title: "ReviewDesk — студентам",
+  description: "Курсы, домашние задания и результаты обучения",
 };
 
 
