@@ -41,9 +41,15 @@ def generate_evaluation_pdf(eval_json_path: str, output_pdf_path: str) -> str:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     font_name = _register_font()
     styles = getSampleStyleSheet()
-    title_style = ParagraphStyle("ReportTitle", parent=styles["Title"], fontName=font_name, alignment=TA_CENTER, fontSize=16, leading=20)
-    heading_style = ParagraphStyle("Heading", parent=styles["Heading2"], fontName=font_name, fontSize=13, leading=16, spaceBefore=8)
-    body_style = ParagraphStyle("Body", parent=styles["BodyText"], fontName=font_name, fontSize=9, leading=12, alignment=TA_JUSTIFY)
+    title_style = ParagraphStyle(
+        "ReportTitle", parent=styles["Title"], fontName=font_name, alignment=TA_CENTER, fontSize=16, leading=20
+    )
+    heading_style = ParagraphStyle(
+        "Heading", parent=styles["Heading2"], fontName=font_name, fontSize=13, leading=16, spaceBefore=8
+    )
+    body_style = ParagraphStyle(
+        "Body", parent=styles["BodyText"], fontName=font_name, fontSize=9, leading=12, alignment=TA_JUSTIFY
+    )
     label_style = ParagraphStyle("Label", parent=body_style, fontName=font_name, fontSize=10, leading=13)
     small_style = ParagraphStyle("Small", parent=body_style, fontSize=9, leading=12)
     criterion_style = ParagraphStyle("Criterion", parent=body_style, fontSize=14.4, leading=18, spaceBefore=6)
@@ -60,9 +66,21 @@ def generate_evaluation_pdf(eval_json_path: str, output_pdf_path: str) -> str:
         Spacer(1, 4 * mm),
         Paragraph("Сводная таблица баллов", heading_style),
     ]
-    score_rows = [[Paragraph("<b>Критерий</b>", label_style), Paragraph("<b>Получено</b>", label_style), Paragraph("<b>Максимум</b>", label_style)]]
+    score_rows = [
+        [
+            Paragraph("<b>Критерий</b>", label_style),
+            Paragraph("<b>Получено</b>", label_style),
+            Paragraph("<b>Максимум</b>", label_style),
+        ]
+    ]
     for index, result in enumerate(report.criterion_results):
-        score_rows.append([Paragraph(f'<link href="#criterion-{index}">{html_escape(result.criterion_name)}</link>', small_style), str(result.assigned_score), str(result.max_points)])
+        score_rows.append(
+            [
+                Paragraph(f'<link href="#criterion-{index}">{html_escape(result.criterion_name)}</link>', small_style),
+                str(result.assigned_score),
+                str(result.max_points),
+            ]
+        )
     story.append(Table(score_rows, colWidths=[136 * mm, 22 * mm, 22 * mm], repeatRows=1, style=TableStyle([
         ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
         ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#d9e2f3")),
@@ -101,15 +119,29 @@ def generate_evaluation_pdf(eval_json_path: str, output_pdf_path: str) -> str:
     for index, result in enumerate(report.criterion_results):
         criterion = rubric.criteria[index] if rubric and index < len(rubric.criteria) else None
         description = criterion.description if criterion else ""
-        evidence = "<br/>".join(f"• {_linkify(item)}" for item in result.evidence) or "Доказательства не представлены."
+        evidence = "<br/>".join(f"• {_linkify(item)}" for item in result.evidence) or (
+            "Доказательства не представлены."
+        )
         story.extend([
-            Paragraph(f'<a name="criterion-{index}"/><b>{html_escape(result.criterion_name)}</b> — {result.assigned_score:g}/{result.max_points:g}', criterion_style),
+            Paragraph(
+                f'<a name="criterion-{index}"/><b>{html_escape(result.criterion_name)}</b> — '
+                f"{result.assigned_score:g}/{result.max_points:g}",
+                criterion_style,
+            ),
             Paragraph(_linkify(description), breakdown_style),
-            Paragraph(f'<font size="11"><b>Обоснование:</b></font><br/>{_linkify(result.reasoning)}', breakdown_style),
-            Paragraph(f'<font size="11"><b>Доказательства:</b></font><br/>{evidence}', breakdown_style),
+            Paragraph(
+                f'<font size="11"><b>Обоснование:</b></font><br/>{_linkify(result.reasoning)}',
+                breakdown_style,
+            ),
+            Paragraph(
+                f'<font size="11"><b>Доказательства:</b></font><br/>{evidence}',
+                breakdown_style,
+            ),
             Spacer(1, 3 * mm),
         ])
-    SimpleDocTemplate(str(output_path), pagesize=A4, rightMargin=15 * mm, leftMargin=15 * mm, topMargin=15 * mm, bottomMargin=15 * mm).build(story)
+    SimpleDocTemplate(
+        str(output_path), pagesize=A4, rightMargin=15 * mm, leftMargin=15 * mm, topMargin=15 * mm, bottomMargin=15 * mm
+    ).build(story)
     return str(output_path)
 
 

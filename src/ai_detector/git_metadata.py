@@ -65,7 +65,12 @@ class GitMetadataExtractor:
         extract_started = time.perf_counter()
         commits = await self._extract_commits(repo_path)
         file_tree = await self._extract_file_tree(repo_path)
-        logger.info("Метаданные извлечены за %.3f с: коммитов=%d, файлов=%d", time.perf_counter() - extract_started, len(commits), len(file_tree))
+        logger.info(
+            "Метаданные извлечены за %.3f с: коммитов=%d, файлов=%d",
+            time.perf_counter() - extract_started,
+            len(commits),
+            len(file_tree),
+        )
         return commits, file_tree
 
     async def _extract_commits(self, repo_path: Path) -> list[CommitInfo]:

@@ -79,7 +79,10 @@ class AIAssessmentResult(BaseModel):
     )
 
     status: Literal["green", "yellow", "red"] = Field(
-        description="Итоговый вердикт на основе reasoning: 'green' (человек), 'yellow' (смешанный/подозрительный), 'red' (явный ИИ/копипаст)"
+        description=(
+            "Итоговый вердикт на основе reasoning: 'green' (человек), "
+            "'yellow' (смешанный/подозрительный), 'red' (явный ИИ/копипаст)"
+        )
     )
     confidence: float = Field(
         ge=0.0,

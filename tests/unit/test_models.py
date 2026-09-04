@@ -19,7 +19,7 @@ def _valid_result(**overrides: object) -> dict[str, object]:
     base: dict[str, object] = {
         "status": "green",
         "confidence": 0.8,
-        "reasoning": "обоснование на русском",
+        "reasoning": "Код написан вручную: постепенная история коммитов, осмысленные имена и естественные комментарии",
         "ai_indicators": [],
         "human_indicators": ["осмысленные коммиты"],
     }

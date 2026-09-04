@@ -24,7 +24,9 @@ class GradingEngine:
         submission_data: SubmissionData,
         config: AppConfig,
     ) -> CriterionResult:
-        file_tree = "\n".join(submission_data.file_tree) or f"{submission_data.submission_id}.{submission_data.file_type}"
+        file_tree = "\n".join(submission_data.file_tree) or (
+            f"{submission_data.submission_id}.{submission_data.file_type}"
+        )
         raw_text = submission_data.raw_text
         raw_text = config.limit_input_text(raw_text)
         full_instructions = config.limit_input_text(task_rubric.full_instructions)
@@ -112,7 +114,12 @@ class GradingEngine:
                 result = None
             if result is not None:
                 break
-            if last_error is not None and not self._is_retryable_error(last_error) and not self._is_model_unavailable(last_error):
+            is_fatal_error = (
+                last_error is not None
+                and not self._is_retryable_error(last_error)
+                and not self._is_model_unavailable(last_error)
+            )
+            if is_fatal_error:
                 break
             click.echo(f"Переход к следующей модели после ошибки LLM: {model_name}.", err=True)
         else:

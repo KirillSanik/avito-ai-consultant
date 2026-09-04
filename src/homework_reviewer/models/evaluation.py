@@ -21,5 +21,7 @@ class EvaluationReport(BaseModel):
     submission_id: str = Field(description="Идентификатор проверенной работы.")
     total_score: float = Field(ge=0, description="Сумма баллов по всем критериям.")
     max_total_score: float = Field(ge=0, description="Сумма максимальных баллов по всем критериям.")
-    criterion_results: list[CriterionResult] = Field(default_factory=list, description="Результаты последовательной проверки по критериям.")
+    criterion_results: list[CriterionResult] = Field(
+        default_factory=list, description="Результаты последовательной проверки по критериям."
+    )
     summary_feedback: str = Field(description="Итоговая обратная связь по работе.")

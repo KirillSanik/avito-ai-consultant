@@ -39,7 +39,7 @@ def make_result(**overrides: object) -> AIAssessmentResult:
     base: dict[str, object] = {
         "status": "green",
         "confidence": 0.9,
-        "reasoning": "постепенная история коммитов, осмысленные имена",
+        "reasoning": "Постепенная история коммитов, осмысленные имена и естественные комментарии",
         "ai_indicators": [],
         "human_indicators": ["осмысленные сообщения коммитов"],
     }

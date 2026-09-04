@@ -80,7 +80,8 @@ class LLMJudge:
     async def _request(self, user_prompt: str) -> AIAssessmentResult:
         """Один запрос ``beta.chat.completions.parse`` с контрактом исключений."""
         attempt_started = time.perf_counter()
-        attempt_number = getattr(self._request.retry.statistics, "attempt_number", 1) if hasattr(self._request, "retry") else 1
+        has_retry = hasattr(self._request, "retry")
+        attempt_number = getattr(self._request.retry.statistics, "attempt_number", 1) if has_retry else 1
         logger.debug("LLM-запрос к модели «%s» (попытка %d)…", self._model, attempt_number)
         try:
             response = await self._client.beta.chat.completions.parse(

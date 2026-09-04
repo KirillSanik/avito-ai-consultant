@@ -100,7 +100,10 @@ class TaskParser:
         except (APITimeoutError, APIConnectionError, APIError, InstructorRetryException) as exc:
             extracted_criteria = self._extract_criteria(full_instructions)
             if not extracted_criteria:
-                click.echo(f"Ошибка LLM-провайдера: сервис не ответил в течение 5 минут или запрос завершился ошибкой: {exc}", err=True)
+                click.echo(
+                    f"Ошибка LLM-провайдера: сервис не ответил в течение 5 минут или запрос завершился ошибкой: {exc}",
+                    err=True,
+                )
                 raise click.ClickException("Не удалось получить разбор задания.") from exc
             rubric = ParsedTaskRubric(
                 task_id=task_id,

@@ -5,7 +5,8 @@ from homework_reviewer.models.evaluation import EvaluationReport
 
 class EvaluationRepository:
     def __init__(self, storage_dir: str | Path | None = None) -> None:
-        self.storage_dir = Path(storage_dir) if storage_dir else Path(__file__).resolve().parents[2] / "storage" / "evaluations"
+        default_dir = Path(__file__).resolve().parents[2] / "storage" / "evaluations"
+        self.storage_dir = Path(storage_dir) if storage_dir else default_dir
         self.storage_dir.mkdir(parents=True, exist_ok=True)
 
     def save(self, report: EvaluationReport) -> str:

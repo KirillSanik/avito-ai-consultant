@@ -20,14 +20,23 @@ def cli() -> None:
 @cli.command("ingest-task")
 @click.option("--file", "pdf_path", type=click.Path(exists=True, dir_okay=False, path_type=Path), required=True)
 @click.option("--task-id", required=True)
-@click.option("-p", "--provider", "llm_provider", type=click.Choice(["openrouter", "ollama"]), default="openrouter", show_default=True)
+@click.option(
+    "-p", "--provider", "llm_provider",
+    type=click.Choice(["openrouter", "ollama"]), default="openrouter", show_default=True,
+)
 @click.option("--api-base", default=None)
 @click.option("--api-key", default=None)
 @click.option("--model", default=None)
 @click.option("--model-name", default=None)
 @click.option("--test-mode", is_flag=True, default=False)
-def ingest_task(pdf_path: Path, task_id: str, llm_provider: str, api_base: str | None, api_key: str | None, model: str | None, model_name: str | None, test_mode: bool) -> None:
-    config = AppConfig(test_mode=test_mode, llm_provider=llm_provider, model=model_name or model, api_base=api_base, api_key=api_key)
+def ingest_task(
+    pdf_path: Path, task_id: str, llm_provider: str, api_base: str | None, api_key: str | None,
+    model: str | None, model_name: str | None, test_mode: bool,
+) -> None:
+    config = AppConfig(
+        test_mode=test_mode, llm_provider=llm_provider, model=model_name or model,
+        api_base=api_base, api_key=api_key,
+    )
     parser = TaskParser(config)
     rubric = parser.parse_task(str(pdf_path), task_id)
     saved_path = TaskRepository().save(rubric)
@@ -39,11 +48,17 @@ def ingest_task(pdf_path: Path, task_id: str, llm_provider: str, api_base: str |
 @click.option("--file", "submission_path", type=click.Path(exists=True, dir_okay=False, path_type=Path), default=None)
 @click.option("--url", "repository_url", default=None)
 @click.option("--task-id", required=True)
-@click.option("-p", "--provider", "llm_provider", type=click.Choice(["openrouter", "ollama"]), default="openrouter", show_default=True)
+@click.option(
+    "-p", "--provider", "llm_provider",
+    type=click.Choice(["openrouter", "ollama"]), default="openrouter", show_default=True,
+)
 @click.option("--model", default=None)
 @click.option("--model-name", default=None)
 @click.option("--test-mode", is_flag=True, default=False)
-def parse_submission(submission_path: Path | None, repository_url: str | None, task_id: str, llm_provider: str, model: str | None, model_name: str | None, test_mode: bool) -> None:
+def parse_submission(
+    submission_path: Path | None, repository_url: str | None, task_id: str, llm_provider: str,
+    model: str | None, model_name: str | None, test_mode: bool,
+) -> None:
     if bool(submission_path) == bool(repository_url):
         raise click.UsageError("Укажите ровно один источник: --file или --url")
     config = AppConfig(test_mode=test_mode, llm_provider=llm_provider, model=model_name or model)
@@ -58,7 +73,10 @@ def parse_submission(submission_path: Path | None, repository_url: str | None, t
     click.echo(f"Таблиц: {len(submission.tables)}; изображений: {submission.image_count}")
     if submission.excel_audit:
         audit = submission.excel_audit
-        click.echo(f"Excel: листов {len(audit.sheet_names)}, строк {audit.total_rows}, формул {audit.formula_count}, констант {audit.hardcoded_count}")
+        click.echo(
+            f"Excel: листов {len(audit.sheet_names)}, строк {audit.total_rows}, "
+            f"формул {audit.formula_count}, констант {audit.hardcoded_count}",
+        )
     for link in submission.resolved_links:
         status = "доступна" if link.is_accessible else "недоступна"
         click.echo(f"Ссылка {status}: HTTP {link.status_code} — {link.url}")
@@ -68,21 +86,34 @@ def parse_submission(submission_path: Path | None, repository_url: str | None, t
 @cli.command("evaluate")
 @click.option("--task-id", default=None)
 @click.option("--submission-id", default=None)
-@click.option("--submission-file", "submission_path", type=click.Path(exists=True, dir_okay=False, path_type=Path), default=None)
-@click.option("-p", "--provider", "llm_provider", type=click.Choice(["openrouter", "ollama"]), default="openrouter", show_default=True)
+@click.option(
+    "--submission-file", "submission_path", type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    default=None,
+)
+@click.option(
+    "-p", "--provider", "llm_provider",
+    type=click.Choice(["openrouter", "ollama"]), default="openrouter", show_default=True,
+)
 @click.option("--api-base", default=None)
 @click.option("--api-key", default=None)
 @click.option("--model", default=None)
 @click.option("--model-name", default=None)
 @click.option("--test-mode", is_flag=True, default=False)
 @click.option("--pdf", "generate_pdf", is_flag=True, default=False)
-def evaluate(task_id: str | None, submission_id: str | None, submission_path: Path | None, llm_provider: str, api_base: str | None, api_key: str | None, model: str | None, model_name: str | None, test_mode: bool, generate_pdf: bool) -> None:
+def evaluate(
+    task_id: str | None, submission_id: str | None, submission_path: Path | None,
+    llm_provider: str, api_base: str | None, api_key: str | None,
+    model: str | None, model_name: str | None, test_mode: bool, generate_pdf: bool,
+) -> None:
     if test_mode:
         task_id = task_id or "task1"
         submission_id = submission_id or "test_repo_ds"
     if not task_id:
         raise click.UsageError("--task-id is required outside test mode")
-    config = AppConfig(test_mode=test_mode, llm_provider=llm_provider, model=model_name or model, api_base=api_base, api_key=api_key)
+    config = AppConfig(
+        test_mode=test_mode, llm_provider=llm_provider, model=model_name or model,
+        api_base=api_base, api_key=api_key,
+    )
     rubric = TaskRepository().load(task_id)
     if submission_id:
         submission = SubmissionRepository().load(submission_id)
