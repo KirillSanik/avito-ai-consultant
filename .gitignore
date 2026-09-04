@@ -161,3 +161,11 @@ src/.env
 # uv
 .uv-cache/
 demo/
+
+# Windows-артефакты и OS-мусор
+*:Zone.Identifier
+.DS_Store
+
+# Образцы заданий и состояние запуска (хранятся локально, не коммитятся)
+data/
+storage/

@@ -216,15 +216,16 @@ async def test_clone_removes_temp_dir_on_cancellation(cloner: ClonerHarness) -> 
     """SC-004: при отмене задачи (CancelledError) временный каталог гарантированно удалён."""
     cloner.enqueue(FakeGitProcess(returncode=0))
     seen: list[Path] = []
+    entered = asyncio.Event()
 
     async def body() -> None:
         async with RepoCloner().clone(REPO_URL) as repo_path:
             seen.append(repo_path)
+            entered.set()
             await asyncio.Event().wait()  # имитация долгого анализа внутри контекста
 
     task = asyncio.create_task(body())
-    while not seen:
-        await asyncio.sleep(0.005)
+    await asyncio.wait_for(entered.wait(), timeout=5)
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task

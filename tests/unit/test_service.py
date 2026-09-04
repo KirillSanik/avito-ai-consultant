@@ -63,13 +63,22 @@ class FakeCloner:
 class GatedFake:
     """Фейк, который фиксирует старт и (опционально) ждёт gate — доказательство параллельного запуска."""
 
-    def __init__(self, gate: asyncio.Event | None, events: list[str], name: str) -> None:
+    def __init__(
+        self,
+        gate: asyncio.Event | None,
+        events: list[str],
+        name: str,
+        both_started: asyncio.Event | None = None,
+    ) -> None:
         self._gate = gate
         self._events = events
         self._name = name
+        self._both_started = both_started
 
     async def _run(self) -> None:
         self._events.append(f"{self._name}:started")
+        if self._both_started is not None and {"extract:started", "aggregate:started"} <= set(self._events):
+            self._both_started.set()
         if self._gate is not None:
             await self._gate.wait()
         self._events.append(f"{self._name}:finished")
@@ -105,14 +114,15 @@ def build_service(
     result: AIAssessmentResult | None = None,
     gate: asyncio.Event | None = None,
     events: list[str] | None = None,
+    both_started: asyncio.Event | None = None,
 ) -> tuple[AIDetectionService, FakeCloner, FakeJudge]:
     events = events if events is not None else []
     cloner = FakeCloner()
     judge = FakeJudge(result or make_result())
     service = AIDetectionService(SimpleNamespace())  # type: ignore[arg-type]
     service._cloner = cloner
-    service._extractor = FakeExtractor(gate, events, "extract")
-    service._aggregator = FakeAggregator(gate, events, "aggregate")
+    service._extractor = FakeExtractor(gate, events, "extract", both_started)
+    service._aggregator = FakeAggregator(gate, events, "aggregate", both_started)
     service._judge = judge
     return service, cloner, judge
 
@@ -132,12 +142,12 @@ def test_init_builds_all_subsystems_without_io(monkeypatch: pytest.MonkeyPatch) 
 async def test_analyze_runs_extract_and_aggregate_in_parallel() -> None:
     """FR-006: git log и чтение файлов стартуют ДО завершения друг друга (обобщённый gather)."""
     gate = asyncio.Event()
+    both_started = asyncio.Event()
     events: list[str] = []
-    service, _cloner, judge = build_service(gate=gate, events=events)
+    service, _cloner, judge = build_service(gate=gate, events=events, both_started=both_started)
 
     task = asyncio.create_task(service.analyze("критерий", REPO_URL))
-    while not {"extract:started", "aggregate:started"} <= set(events):
-        await asyncio.sleep(0.005)
+    await asyncio.wait_for(both_started.wait(), timeout=5)
     assert not any(e.endswith(":finished") for e in events)  # оба ещё выполняются — параллельность доказана
     gate.set()
 
