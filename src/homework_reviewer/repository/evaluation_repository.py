@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from homework_reviewer.models.evaluation import EvaluationReport
+from common.models import EvaluationReport
 
 
 class EvaluationRepository:

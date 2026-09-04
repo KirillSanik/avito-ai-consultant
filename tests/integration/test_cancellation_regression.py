@@ -12,7 +12,7 @@ transp._wait()``) зависает навсегда: ``_try_finish()`` треб�
 вечно — процесс умирает невыходом **без исключения** (сценарий T029: репо
 без поддерживаемых файлов, агрегатор падает синхронно, запуск git ещё вполёте).
 
-``ai_detector._spawn.spawn_git`` устойчив к этому: запуск идёт в отдельной
+``common.spawn.spawn_git`` устойчив к этому: запуск идёт в отдельной
 ``asyncio.shield``-задаче, а если после отмены задача зависла в
 ``transp._wait()``, короткий дожидающий окно и второй ``cancel()``
 гарантируют завершение shut-down.
@@ -49,7 +49,7 @@ _CHILD_SCRIPT = """
 import asyncio
 import sys
 
-from ai_detector._spawn import spawn_git
+from common.spawn import spawn_git
 
 
 async def spawner() -> None:

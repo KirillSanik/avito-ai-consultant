@@ -1,14 +1,18 @@
+"""Точка входа: запуск uvicorn (``uv run main.py``), настройки — ``common.settings``."""
+
 import uvicorn
-from utils.config import CONFIG
+
+from common.settings import get_settings
 
 if __name__ == "__main__":
+    settings = get_settings()
     try:
         uvicorn.run(
             app="src.app:app",
-            host=CONFIG.APP_HOST,
-            port=CONFIG.APP_PORT,
+            host=settings.app_host,
+            port=settings.app_port,
             reload=False,
-            workers=CONFIG.APP_WORKERS,
+            workers=settings.app_workers,
         )
     finally:
         print("Сервис остановлен")

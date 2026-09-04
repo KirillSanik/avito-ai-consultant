@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from homework_reviewer.models.submission import SubmissionData
+from common.models import SubmissionData
 
 
 class SubmissionRepository:

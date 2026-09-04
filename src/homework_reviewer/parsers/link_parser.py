@@ -5,7 +5,7 @@ from urllib.parse import quote
 import requests
 from bs4 import BeautifulSoup
 
-from homework_reviewer.models.submission import LinkInfo
+from common.models import LinkInfo
 
 
 class LinkParser:

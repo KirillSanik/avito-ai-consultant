@@ -1,4 +1,4 @@
-"""Запуск git CLI, устойчивый к отмене вызывающей задачи.
+"""Общий запуск git CLI, устойчивый к отмене вызывающей задачи.
 
 Бихевиор CPython asyncio (наблюдено на 3.10–3.13.3): ``asyncio.create_subprocess_exec``
 создаёт внутреннюю задачу event loop ``BaseSubprocessTransport._connect_pipes``,

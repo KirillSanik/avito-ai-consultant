@@ -20,8 +20,7 @@ from reportlab.platypus import (
     TableStyle,
 )
 
-from homework_reviewer.models.evaluation import EvaluationReport
-from homework_reviewer.models.rubric import TaskRubric
+from common.models import EvaluationReport, TaskRubric
 
 
 def _register_font() -> str:
