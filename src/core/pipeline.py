@@ -62,13 +62,13 @@ class Pipeline:
         self._detector = detector
         self._reviewer = reviewer
         self.settings = settings or get_settings()
-        self._rubric_client: instructor.Instructor | None = None
+        self._rubric_client_instance: instructor.Instructor | None = None
 
     def _rubric_client(self) -> instructor.Instructor:
         """Lazy-фабрика instructor-клиента для разбора условия (один на процесс)."""
-        if self._rubric_client is None:
-            self._rubric_client = get_openrouter_client(self.settings)
-        return self._rubric_client
+        if self._rubric_client_instance is None:
+            self._rubric_client_instance = get_openrouter_client(self.settings)
+        return self._rubric_client_instance
 
     @staticmethod
     def _submission_id(repo_url: str) -> str:

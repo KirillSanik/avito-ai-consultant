@@ -42,10 +42,22 @@ class Settings(BaseSettings):
     api_key: str | None = Field(default=None, description="Переопределение API-ключа ревьюера.")
     openrouter_api_key: str | None = Field(default=None)
 
-    # --- LLM детектора (локальный OpenAI-совместимый сервер) -------------------
+    # --- LLM детектора (локальный OpenAI-совместимый сервер или OpenRouter) ----
+    ai_detector_llm_provider: Literal["local", "openrouter"] = Field(
+        default="local", description="Провайдер детектора (AI_DETECTOR_LLM_PROVIDER): local | openrouter."
+    )
     ai_detector_llm_model: str = Field(default="local-model", description="Модель детектора (AI_DETECTOR_LLM_MODEL).")
     ai_detector_llm_base_url: str | None = Field(default=None, description="Base URL локального LLM-сервера детектора.")
-    ai_detector_llm_api_key: str | None = Field(default=None, description="API-ключ локального LLM-сервера детектора.")
+    ai_detector_llm_api_key: str | None = Field(default=None, description="API-ключ LLM-сервера детектора.")
+
+    # --- Общий лимит генерации --------------------------------------------------
+    llm_max_tokens: int = Field(
+        default=16384, ge=1, description="max_tokens LLM-запросов (LLM_MAX_TOKENS); лимит вывода без усечения."
+    )
+    llm_disable_thinking: bool = Field(
+        default=True,
+        description="Отключать reasoning-режим Qwen3 (chat_template_kwargs.enable_thinking=false) — ускоряет ответ.",
+    )
 
     # --- Git-токены приватных репозиториев -------------------------------------
     github_token: str | None = Field(default=None)
@@ -91,6 +103,40 @@ class Settings(BaseSettings):
             return (self.model_name,)
         return tuple(dict.fromkeys((self.model_name, *OPENROUTER_FREE_MODELS)))
 
+    # --- Детектор: эффективные подключения и цепочка моделей --------------------
+
+    @field_validator("ai_detector_llm_provider")
+    @classmethod
+    def _validate_detector_provider(cls, value: str) -> str:
+        if value not in {"local", "openrouter"}:
+            raise ValueError("ai_detector_llm_provider должен быть local или openrouter")
+        return value
+
+    @property
+    def ai_detector_effective_base_url(self) -> str:
+        """Base URL детектора: явное переопределение или OpenRouter/локальный сервер по провайдеру."""
+        if self.ai_detector_llm_base_url:
+            return self.ai_detector_llm_base_url
+        if self.ai_detector_llm_provider == "openrouter":
+            return "https://openrouter.ai/api/v1"
+        return "http://localhost:11434/v1"
+
+    @property
+    def ai_detector_effective_api_key(self) -> str:
+        """API-ключ детектора: явное переопределение, иначе OPENROUTER_API_KEY или заглушка."""
+        if self.ai_detector_llm_api_key:
+            return self.ai_detector_llm_api_key
+        if self.ai_detector_llm_provider == "openrouter":
+            return self.openrouter_api_key or ""
+        return "not-set"
+
+    @property
+    def ai_detector_model_chain(self) -> tuple[str, ...]:
+        """Цепочка моделей детектора: одна для local; для openrouter — модель + бесплатные резервы."""
+        if self.ai_detector_llm_provider != "openrouter":
+            return (self.ai_detector_llm_model,)
+        return tuple(dict.fromkeys((self.ai_detector_llm_model, *OPENROUTER_FREE_MODELS)))
+
     @property
     def max_chars(self) -> int | None:
         return 12000 if self.test_mode else None
@@ -102,6 +148,16 @@ class Settings(BaseSettings):
     @property
     def ollama_extra_body(self) -> dict[str, Any] | None:
         return {"options": {"num_ctx": self.num_ctx}} if self.num_ctx is not None else None
+
+    @property
+    def chat_extra_body(self) -> dict[str, Any] | None:
+        """Дополнительное тело chat-запроса: ollama-опции + отключение reasoning Qwen3."""
+        body: dict[str, Any] = {}
+        if self.ollama_extra_body:
+            body.update(self.ollama_extra_body)
+        if self.llm_disable_thinking:
+            body["chat_template_kwargs"] = {"enable_thinking": False}
+        return body or None
 
     def limit_input_text(self, text: str) -> str:
         """Усекает входной текст до ``max_chars`` в test-режиме; иначе возвращает как есть."""

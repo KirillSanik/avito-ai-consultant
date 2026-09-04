@@ -20,11 +20,15 @@ DEFAULT_DETECTOR_BASE_URL = "http://localhost:11434/v1"
 
 
 def get_llm_client(settings: Settings | None = None) -> AsyncOpenAI:
-    """``AsyncOpenAI`` для детектора: base_url/ключ/модель — из настроек (env/``.env``)."""
+    """``AsyncOpenAI`` для детектора: локальный сервер или OpenRouter — из настроек (env/``.env``)."""
     s = settings or get_settings()
+    if s.ai_detector_llm_provider == "openrouter" and not s.openrouter_api_key and not s.ai_detector_llm_api_key:
+        raise ValueError(
+            "OPENROUTER_API_KEY is required when AI_DETECTOR_LLM_PROVIDER is openrouter"
+        )
     return AsyncOpenAI(
-        base_url=s.ai_detector_llm_base_url or DEFAULT_DETECTOR_BASE_URL,
-        api_key=s.ai_detector_llm_api_key or "not-set",
+        base_url=s.ai_detector_effective_base_url,
+        api_key=s.ai_detector_effective_api_key,
     )
 
 

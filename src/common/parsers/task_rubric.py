@@ -22,7 +22,6 @@ from common.settings import Settings
 logger = logging.getLogger(__name__)
 
 #: Параметры LLM-запроса разбора условия (сохранены из прежней реализации).
-DEFAULT_MAX_TOKENS = 2600
 DEFAULT_TIMEOUT_SECONDS = 300.0
 DEFAULT_MAX_RETRIES = 1
 
@@ -43,15 +42,15 @@ async def _llm_parse(
     request_options: dict[str, object] = {
         "response_model": ParsedTaskRubric,
         "max_retries": DEFAULT_MAX_RETRIES,
-        "max_tokens": DEFAULT_MAX_TOKENS,
+        "max_tokens": settings.llm_max_tokens,
         "timeout": DEFAULT_TIMEOUT_SECONDS,
         "messages": [
             {"role": "system", "content": TASK_PARSE_SYSTEM_PROMPT},
             {"role": "user", "content": user_prompt},
         ],
     }
-    if settings.ollama_extra_body:
-        request_options["extra_body"] = settings.ollama_extra_body
+    if settings.chat_extra_body:
+        request_options["extra_body"] = settings.chat_extra_body
     return await client.chat.completions.create(model=model, **request_options)
 
 
