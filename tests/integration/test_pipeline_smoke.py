@@ -153,7 +153,7 @@ def _default_result() -> AIAssessmentResult:
     return AIAssessmentResult(
         status="green",
         confidence=0.9,
-        reasoning="причина",
+        reasoning="Обоснование вердикта: история коммитов и стиль кода согласованы с работой человека",
         ai_indicators=[],
         human_indicators=[],
     )

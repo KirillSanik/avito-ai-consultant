@@ -19,12 +19,17 @@ class SubmissionParser:
         {"data", "dataset", "datasets", "rawdata", "artifacts", "logs", "cache", "git", "venv", "pycache"}
     )
     ignored_extensions: ClassVar[frozenset[str]] = frozenset(
-        {".csv", ".parquet", ".feather", ".h5", ".hdf5", ".pkl", ".npy", ".npz", ".db", ".sqlite", ".zip", ".tar", ".exe", ".png", ".jpg"}
+        {
+            ".csv", ".parquet", ".feather", ".h5", ".hdf5", ".pkl", ".npy", ".npz", ".db", ".sqlite",
+            ".zip", ".tar", ".exe", ".png", ".jpg",
+        }
     )
     supported_repository_extensions: ClassVar[frozenset[str]] = frozenset(
         {".py", ".ipynb", ".sql", ".sh", ".go", ".md", ".docx", ".pdf", ".xlsx"}
     )
-    excluded_task_names: ClassVar[frozenset[str]] = frozenset({"описаниезадания", "taskdescription", "assignmentdescription"})
+    excluded_task_names: ClassVar[frozenset[str]] = frozenset(
+        {"описаниезадания", "taskdescription", "assignmentdescription"}
+    )
 
     def __init__(self, config: AppConfig | None = None, task_id: str = "") -> None:
         self.config = config or AppConfig()
@@ -46,7 +51,17 @@ class SubmissionParser:
         urls = self.link_parser.extract_urls(parsed["raw_text"])
         urls.extend(parsed["links"])
         unique_urls = list(dict.fromkeys(urls))
-        return SubmissionData(submission_id=source.stem, task_id=task_id, file_type=extension.removeprefix("."), file_tree=[source.name], raw_text=parsed["raw_text"], tables=parsed["tables"], excel_audit=parsed["excel_audit"], resolved_links=[self.link_parser.resolve_link(url) for url in unique_urls], image_count=parsed["image_count"])
+        return SubmissionData(
+            submission_id=source.stem,
+            task_id=task_id,
+            file_type=extension.removeprefix("."),
+            file_tree=[source.name],
+            raw_text=parsed["raw_text"],
+            tables=parsed["tables"],
+            excel_audit=parsed["excel_audit"],
+            resolved_links=[self.link_parser.resolve_link(url) for url in unique_urls],
+            image_count=parsed["image_count"],
+        )
 
     def parse_github_repository(self, repo_url: str) -> SubmissionData:
         clone_url = self._authenticated_clone_url(repo_url)
@@ -130,7 +145,13 @@ class SubmissionParser:
             return self._parse_pdf(str(path))
         if extension in self.parsers:
             return self.parsers[extension].parse(str(path))
-        return {"raw_text": path.read_text(encoding="utf-8", errors="replace"), "tables": [], "links": [], "excel_audit": None, "image_count": 0}
+        return {
+            "raw_text": path.read_text(encoding="utf-8", errors="replace"),
+            "tables": [],
+            "links": [],
+            "excel_audit": None,
+            "image_count": 0,
+        }
 
     @staticmethod
     def _normalize_name(value: str) -> str:
@@ -155,4 +176,10 @@ class SubmissionParser:
                     uri = annotation.get("uri")
                     if uri:
                         links.append(uri)
-        return {"raw_text": "\n\n".join(parts), "tables": tables, "links": links, "excel_audit": None, "image_count": image_count}
+        return {
+            "raw_text": "\n\n".join(parts),
+            "tables": tables,
+            "links": links,
+            "excel_audit": None,
+            "image_count": image_count,
+        }

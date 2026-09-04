@@ -10,11 +10,26 @@ class Criterion(BaseModel):
 
 
 class Constraints(BaseModel):
-    technical_requirements: list[str] = Field(default_factory=list, description="Технические требования к работе, инструментам, файлам или среде выполнения.")
-    formatting_requirements: list[str] = Field(default_factory=list, description="Требования к оформлению, структуре, формату и составу сдаваемой работы.")
-    submission_requirements: list[str] = Field(default_factory=list, description="Условия и способ сдачи работы, включая сроки, если они указаны.")
-    prohibited_actions: list[str] = Field(default_factory=list, description="Запрещённые действия, материалы или способы выполнения работы.")
-    additional_requirements: list[str] = Field(default_factory=list, description="Прочие важные ограничения и требования из русскоязычных методических указаний.")
+    technical_requirements: list[str] = Field(
+        default_factory=list,
+        description="Технические требования к работе, инструментам, файлам или среде выполнения.",
+    )
+    formatting_requirements: list[str] = Field(
+        default_factory=list,
+        description="Требования к оформлению, структуре, формату и составу сдаваемой работы.",
+    )
+    submission_requirements: list[str] = Field(
+        default_factory=list,
+        description="Условия и способ сдачи работы, включая сроки, если они указаны.",
+    )
+    prohibited_actions: list[str] = Field(
+        default_factory=list,
+        description="Запрещённые действия, материалы или способы выполнения работы.",
+    )
+    additional_requirements: list[str] = Field(
+        default_factory=list,
+        description="Прочие важные ограничения и требования из русскоязычных методических указаний.",
+    )
 
     @model_validator(mode="before")
     @classmethod
@@ -27,9 +42,21 @@ class Constraints(BaseModel):
 class TaskRubric(BaseModel):
     task_id: str = Field(description="Уникальный идентификатор задания, переданный при загрузке.")
     title: str = Field(description="Название задания на русском языке.")
-    description: str = Field(description="Краткое, но полное описание цели и ожидаемого результата задания на русском языке.")
-    full_instructions: str = Field(default="", description="Полный исходный текст задания, извлечённый из загруженного документа.")
-    guidelines: list[str] = Field(default_factory=list, description="Пошаговые указания по выполнению задания, извлечённые из русскоязычного исходного документа.")
-    criteria: list[Criterion] = Field(default_factory=list, description="Критерии оценивания с названиями, описаниями и диапазонами баллов.")
-    constraints: Constraints = Field(default_factory=Constraints, description="Технические, форматные и иные ограничения задания.")
+    description: str = Field(
+        description="Краткое, но полное описание цели и ожидаемого результата задания на русском языке.",
+    )
+    full_instructions: str = Field(
+        default="", description="Полный исходный текст задания, извлечённый из загруженного документа.",
+    )
+    guidelines: list[str] = Field(
+        default_factory=list,
+        description="Пошаговые указания по выполнению задания, извлечённые из русскоязычного исходного документа.",
+    )
+    criteria: list[Criterion] = Field(
+        default_factory=list,
+        description="Критерии оценивания с названиями, описаниями и диапазонами баллов.",
+    )
+    constraints: Constraints = Field(
+        default_factory=Constraints, description="Технические, форматные и иные ограничения задания.",
+    )
     total_points: float = Field(default=0, ge=0, description="Максимальное суммарное число баллов за задание.")

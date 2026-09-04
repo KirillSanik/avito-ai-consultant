@@ -39,7 +39,7 @@ def make_result(status: str = "green") -> AIAssessmentResult:
     return AIAssessmentResult(
         status=status,
         confidence=0.8,
-        reasoning="причина",
+        reasoning="Обоснование вердикта: история коммитов и стиль кода согласованы с работой человека",
         ai_indicators=[],
         human_indicators=["осмысленные коммиты"],
     )
@@ -212,7 +212,9 @@ async def test_analyze_continues_with_empty_commit_history() -> None:
 async def test_network_failure_mid_clone_raises_domain_error_and_cleans_temp(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Сетевой сбой в середине клонирования → RepoCloneError (иерархия AIDetectionError) + нет остатков temp (FR-010, FR-013)."""
+    """Сетевой сбой в середине клонирования → RepoCloneError (иерархия AIDetectionError)
+    + нет остатков temp (FR-010, FR-013).
+    """
 
     class FailingCloneProcess:
         returncode = 128

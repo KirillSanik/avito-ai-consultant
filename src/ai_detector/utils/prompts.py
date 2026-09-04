@@ -44,10 +44,14 @@ SYSTEM_PROMPT: str = (
     "\n"
     "**ТРЕБОВАНИЯ К ЗАПОЛНЕНИЮ ПОЛЕЙ:**\n"
     "1. Все текстовые поля (`reasoning`, `ai_indicators`, `human_indicators`) заполняй строго на русском языке.\n"
-    "2. Сначала заполни списки `ai_indicators` и `human_indicators`. Если признаков какой-то категории нет, возвращай пустой список [].\n"
+    "2. Сначала заполни списки `ai_indicators` и `human_indicators`. Если признаков какой-то "
+    "категории нет, возвращай пустой список [].\n"
     "3. В поле `reasoning` опирайся на выписанные маркеры: явно взвесь аргументы «за человека» и «за ИИ», "
     "и логически подведи итог.\n"
-    "4. На основе `reasoning` выбери итоговый `status` (строго 'green', 'yellow' или 'red') и оцени `confidence`."
+    "4. На основе `reasoning` выбери итоговый `status` (строго 'green', 'yellow' или 'red') и оцени "
+    "`confidence`.\n"
+    "5. В ответе ровно 5 полей: `status`, `confidence`, `reasoning`, `ai_indicators`, `human_indicators`. "
+    "Поле `task_compliance_score` в схеме отсутствует: не заполняй и не выдумывай его."
 )
 
 #: Шаблон user-сообщения — дословно из ТЗ §5 (contracts/llm-structured-output.md §4).

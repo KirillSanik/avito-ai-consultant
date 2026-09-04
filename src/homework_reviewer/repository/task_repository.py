@@ -5,7 +5,8 @@ from homework_reviewer.models.rubric import TaskRubric
 
 class TaskRepository:
     def __init__(self, storage_dir: str | Path | None = None) -> None:
-        self.storage_dir = Path(storage_dir) if storage_dir else Path(__file__).resolve().parents[2] / "storage" / "tasks"
+        default_dir = Path(__file__).resolve().parents[2] / "storage" / "tasks"
+        self.storage_dir = Path(storage_dir) if storage_dir else default_dir
         self.storage_dir.mkdir(parents=True, exist_ok=True)
 
     def save(self, rubric: TaskRubric) -> str:

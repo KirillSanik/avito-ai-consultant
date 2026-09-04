@@ -139,7 +139,12 @@ class RepoCloner:
                 ) from None
             returncode = process.returncode
             if returncode != 0:
-                logger.error("git clone %s завершился с кодом %d за %.3f с", repo_url, returncode, time.perf_counter() - clone_started)
+                logger.error(
+                    "git clone %s завершился с кодом %d за %.3f с",
+                    repo_url,
+                    returncode,
+                    time.perf_counter() - clone_started,
+                )
                 raise RepoCloneError(_clone_failure_message(repo_url, _stderr_tail(stderr), token, temp_dir.name))
             logger.info("git clone %s выполнен за %.3f с", repo_url, time.perf_counter() - clone_started)
             yield repo_path

@@ -50,7 +50,9 @@ class LocalCodeAggregator:
         if not relative_paths:
             logger.error("Агрегация: поддерживаемых исходных файлов не найдено")
             raise CodeAggregationError("no supported source files")
-        logger.debug("Агрегация: чтение %d файлов (параллельно до %d)…", len(relative_paths), self._max_concurrent_reads)
+        logger.debug(
+            "Агрегация: чтение %d файлов (параллельно до %d)…", len(relative_paths), self._max_concurrent_reads
+        )
         contents = await asyncio.gather(*(self._read_file(repo_path / rel) for rel in relative_paths))
         blocks: list[str] = []
         # strict=True: списки равной длины по построению (gather по тому же списку путей).
