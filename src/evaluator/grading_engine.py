@@ -1,8 +1,10 @@
 import click
-import instructor
-from openai import APIConnectionError, APIError, APITimeoutError, OpenAI
+from instructor.core import IncompleteOutputException, InstructorRetryException
+from openai import APIConnectionError, APIError, APITimeoutError
+from time import sleep
 
 from src.config import AppConfig
+from src.evaluator.client_factory import get_instructor_client
 from src.models.evaluation import CriterionResult, EvaluationReport
 from src.models.rubric import Criterion, TaskRubric
 from src.models.submission import SubmissionData
@@ -12,6 +14,7 @@ from src.repository.evaluation_repository import EvaluationRepository
 class GradingEngine:
     def __init__(self, config: AppConfig | None = None) -> None:
         self.config = config or AppConfig()
+        self._has_sent_request = False
 
     def evaluate_criterion(
         self,
@@ -20,7 +23,6 @@ class GradingEngine:
         submission_data: SubmissionData,
         config: AppConfig,
     ) -> CriterionResult:
-        client = instructor.from_openai(OpenAI(base_url=config.api_base, api_key=config.api_key), mode=instructor.Mode.JSON)
         file_tree = "\n".join(submission_data.file_tree) or f"{submission_data.submission_id}.{submission_data.file_type}"
         raw_text = submission_data.raw_text
         raw_text = config.limit_input_text(raw_text)
@@ -28,9 +30,15 @@ class GradingEngine:
         excel_audit = submission_data.excel_audit.model_dump_json(indent=2) if submission_data.excel_audit else "Нет"
         resolved_links = "\n".join(link.model_dump_json() for link in submission_data.resolved_links) or "Нет"
         system_prompt = (
-            "Ты проверяешь русскоязычную студенческую работу строго по одному критерию. "
+            "Ты проверяешь русскоязычную студенческую работу строго по одному критерию с высокой строгостью. "
             "Не учитывай никакие другие критерии и не добавляй требований, которых нет в активном критерии. "
-            "Оцени только по представленным данным, приведи конкретные доказательства из работы. "
+            "Оцени только по представленным данным. Перед начислением каждого балла найди явное доказательство "
+            "в тексте, таблицах, ссылках или структуре сдачи и процитируй его в evidence. За частичное выполнение, "
+            "пропущенные edge cases, слабое обоснование и поверхностный ответ снижай баллы. Максимум нельзя ставить "
+            "по умолчанию: полный балл допустим только при полном, безошибочном выполнении всех требований критерия. "
+            "Если все требования критерия исчерпывающе подтверждены, выставь полный балл честно и без занижения. "
+            "Поля reasoning и evidence заполняй только на русском языке. Не используй английские слова, кроме "
+            "непереводимых названий продуктов, ссылок, форматов файлов и общепринятых аббревиатур. "
             "Баллы должны находиться в диапазоне от 0 до указанного максимума. "
             "Верни только JSON-объект верхнего уровня с ключами criterion_id, criterion_name, "
             "assigned_score, max_points, reasoning и evidence. Не оборачивай объект в ключ "
@@ -58,8 +66,7 @@ class GradingEngine:
             f"Проверенные ссылки:\n{resolved_links}"
         )
         request_options = {
-            "model": config.model_name,
-            "max_tokens": 800,
+            "max_tokens": 2600,
             "response_model": CriterionResult,
             "max_retries": 1,
             "timeout": 300.0,
@@ -70,11 +77,50 @@ class GradingEngine:
         }
         if config.ollama_extra_body:
             request_options["extra_body"] = config.ollama_extra_body
-        try:
-            result = client.chat.completions.create(**request_options)
-        except (APITimeoutError, APIConnectionError, APIError) as exc:
-            click.echo(f"Ошибка Ollama: сервис не ответил в течение 5 минут или запрос завершился ошибкой: {exc}", err=True)
-            raise click.ClickException(f"Не удалось оценить критерий «{criterion.name}».") from exc
+        last_error: Exception | None = None
+        result: CriterionResult | None = None
+        for model_name in config.model_chain:
+            request_options["model"] = model_name
+            for attempt in range(3):
+                if attempt:
+                    sleep(2 ** attempt)
+                try:
+                    if self._has_sent_request:
+                        sleep(2)
+                    self._has_sent_request = True
+                    client = get_instructor_client(config)
+                    result = client.chat.completions.create(**request_options)
+                    break
+                except (
+                    APITimeoutError,
+                    APIConnectionError,
+                    APIError,
+                    IncompleteOutputException,
+                    InstructorRetryException,
+                ) as exc:
+                    last_error = exc
+                    if self._is_model_unavailable(exc) or not self._is_retryable_error(exc):
+                        break
+                    click.echo(
+                        f"Ошибка LLM для модели {model_name}; повтор {attempt + 1}/3.",
+                        err=True,
+                    )
+                    if attempt < 2:
+                        sleep(2)
+            else:
+                result = None
+            if result is not None:
+                break
+            if last_error is not None and not self._is_retryable_error(last_error) and not self._is_model_unavailable(last_error):
+                break
+            click.echo(f"Переход к следующей модели после ошибки LLM: {model_name}.", err=True)
+        else:
+            result = None
+        if result is None:
+            message = f"Не удалось оценить критерий «{criterion.name}»."
+            if last_error is not None:
+                click.echo(f"Ошибка LLM-провайдера: {last_error}", err=True)
+            raise click.ClickException(message) from last_error
         assigned_score = min(max(float(result.assigned_score), 0.0), float(criterion.max_points))
         return result.model_copy(
             update={
@@ -84,6 +130,34 @@ class GradingEngine:
                 "max_points": float(criterion.max_points),
             }
         )
+
+    @staticmethod
+    def _is_retryable_error(error: Exception) -> bool:
+        current: BaseException | None = error
+        while current is not None:
+            status_code = getattr(current, "status_code", None)
+            if status_code in {402, 429} or isinstance(
+                current,
+                (
+                    APIConnectionError,
+                    APITimeoutError,
+                    IncompleteOutputException,
+                    InstructorRetryException,
+                ),
+            ):
+                return True
+            current = current.__cause__ or current.__context__
+        message = str(error).lower()
+        return "in_flight_budget_exhausted" in message or "rate limit" in message or "429" in message
+
+    @staticmethod
+    def _is_model_unavailable(error: Exception) -> bool:
+        current: BaseException | None = error
+        while current is not None:
+            if getattr(current, "status_code", None) == 404:
+                return True
+            current = current.__cause__ or current.__context__
+        return "error code: 404" in str(error).lower() or '"code": 404' in str(error).lower()
 
     def evaluate_submission(
         self,

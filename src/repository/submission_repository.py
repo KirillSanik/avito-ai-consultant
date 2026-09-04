@@ -6,6 +6,7 @@ from src.models.submission import SubmissionData
 class SubmissionRepository:
     def __init__(self, storage_dir: str | Path | None = None) -> None:
         self.storage_dir = Path(storage_dir) if storage_dir else Path(__file__).resolve().parents[2] / "storage" / "submissions"
+        self.storage_dir.mkdir(parents=True, exist_ok=True)
 
     def save(self, submission: SubmissionData) -> str:
         path = self._path_for(submission.submission_id)

@@ -1,117 +1,256 @@
 # Automated Homework Reviewer
 
-Автоматизированный пайплайн проверки учебных работ. Он извлекает требования из задания, разбирает локальную сдачу или GitHub-репозиторий и оценивает работу по критериям через локальную LLM.
+## 1. Overview
 
-## Архитектура
+Automated Homework Reviewer is a Python pipeline that extracts a rubric from an assignment, parses a local submission or GitHub repository, and evaluates the submission criterion by criterion with an LLM. Each stage persists validated Pydantic JSON, and an existing evaluation can be rendered as a Russian-language PDF report.
 
-Три последовательных этапа:
+The workflow is designed as an AI draft for human review: the generated score and feedback must be checked by a reviewer before publication.
 
-1. **Ingest Task**: PDF задания → `TaskRubric` с полными инструкциями, критериями, ограничениями и максимальными баллами.
-2. **Parse Submission**: локальный `.xlsx`, `.docx` или `.pdf`, либо GitHub-репозиторий → `SubmissionData` с текстом, таблицами, ссылками и деревом файлов.
-3. **Evaluate**: `TaskRubric` + `SubmissionData` → последовательная проверка каждого критерия → `EvaluationReport`.
+## 2. Quick Start & Pipeline Verification
 
-Баллы по каждому критерию валидируются Pydantic-схемой. Итоговый балл рассчитывается в Python как сумма оценок, а не генерируется моделью.
-
-## Технологии
-
-- Python 3.10+, Click, Pydantic v2
-- Instructor и Ollama с Qwen2.5
-- pdfplumber, python-docx, openpyxl
-- Git CLI для shallow-clone GitHub-репозиториев
-- python-dotenv для переменных окружения
-
-## Установка
-
-Нужны Python 3.10+ и Ollama. Установите зависимости и загрузите модели:
+Requirements: Python 3.10+ and dependencies from `requirements.txt`.
 
 ```bash
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-ollama pull qwen2.5:7b
-ollama pull qwen2.5:1.5b
-ollama serve
+export OPENROUTER_API_KEY='your-key'
 ```
 
-Для доступа к приватным GitHub-репозиториям создайте `.env` на основе `.env.example`:
+`OPENROUTER_API_KEY` can also be placed in a local `.env` file. Never commit or print it. Use `--provider ollama` with a running Ollama server when an external provider is not required.
 
-```dotenv
-GITHUB_TOKEN=your_github_token_here
-```
-
-Токен добавляется только к HTTPS URL во время `git clone`; публичные репозитории работают без него.
-
-## CLI
-
-### 1. Загрузка задания
+Run the complete pipeline with a local submission:
 
 ```bash
-python main.py ingest-task --file <path_to_task.pdf> --task-id <id> [--test-mode]
+python main.py ingest-task \
+  --file data/Product_Fraud_hw2.pdf \
+  --task-id productfraudhw2 \
+  --provider openrouter
+
+python main.py parse-submission \
+  --file 'data/Product_Fraud_ДЗ2_Решение хорошее.docx' \
+  --task-id productfraudhw2
+
+python main.py evaluate \
+  --task-id productfraudhw2 \
+  --submission-id 'Product_Fraud_ДЗ2_Решение хорошее' \
+  --provider openrouter \
+  --pdf
 ```
 
-### 2. Разбор локальной сдачи
+For a GitHub submission, keep the existing task artifact and run only parsing and evaluation:
 
 ```bash
-python main.py parse-submission --file <path_to_submission> --task-id <id>
+python main.py parse-submission \
+  --url https://github.com/ArtemCh101/test_repo \
+  --task-id productfraudhw2
+
+python main.py evaluate \
+  --task-id productfraudhw2 \
+  --submission-id test_repo \
+  --provider openrouter \
+  --pdf
 ```
 
-Поддерживаются `.xlsx`, `.docx` и `.pdf`.
-
-### 2. Разбор GitHub-репозитория
+Verify each persisted artifact:
 
 ```bash
-python main.py parse-submission --url <repo_url> --task-id <id>
+python - <<'PY'
+import json
+from pathlib import Path
+
+for path in [
+    Path("storage/tasks/productfraudhw2.json"),
+    Path("storage/submissions/Product_Fraud_ДЗ2_Решение хорошее.json"),
+    Path("storage/evaluations/Product_Fraud_ДЗ2_Решение хорошее.json"),
+]:
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    assert payload
+    print(path, "OK")
+PY
 ```
 
-Укажите ровно один источник: `--file` или `--url`. При разборе репозитория игнорируются служебные каталоги, наборы данных, бинарные файлы, файлы крупнее 1 МБ и нормализованные названия описаний задания. Оставшиеся файлы объединяются с явными границами `=== FILE: ... ===`.
+The task must be ingested once and then reused by ID. Do not ingest the same assignment again for each submission. Reports are written to `storage/reports/`.
 
-### 3. Оценивание
+## 3. Stage-by-Stage Breakdown
 
-Передайте новый файл:
+### Stage 1: Task Ingestion
+
+**Purpose:** Extract assignment text, instructions, constraints, criteria, and maximum scores into a reusable rubric.
+
+**Input:** A task PDF and a unique `--task-id`; optional `--provider`, `--model-name`, and `--test-mode`.
+
+**Output:** `storage/tasks/<task-id>.json`, validated as `TaskRubric`.
+
+**Verification:**
 
 ```bash
-python main.py evaluate --task-id <id> --submission-file <path_to_submission> [--test-mode]
+python main.py ingest-task \
+  --file data/Product_BM_ДЗ1_условия.pdf \
+  --task-id task1 \
+  --provider openrouter
+
+python - <<'PY'
+from src.repository.task_repository import TaskRepository
+
+rubric = TaskRepository().load("task1")
+assert rubric.criteria
+assert rubric.total_points == sum(item.max_points for item in rubric.criteria)
+assert all(item.description.strip() and item.max_points >= 0 for item in rubric.criteria)
+print("Task ingestion OK:", len(rubric.criteria), "criteria")
+PY
 ```
 
-Или ранее сохранённую сдачу, включая GitHub-сдачу:
+### Stage 2: Submission Parsing
+
+**Purpose:** Extract text, tables, spreadsheet audit data, repository files, and external links from a submission.
+
+**Input:** Exactly one of `--file` (`.xlsx`, `.docx`, or `.pdf`) or `--url` (an HTTPS GitHub repository), plus an existing task ID.
+
+**Output:** `storage/submissions/<submission-id>.json`, validated as `SubmissionData`. Local file submissions use the file stem as the submission ID; GitHub submissions use the repository name.
+
+**Verification:**
 
 ```bash
-python main.py evaluate --task-id <id> --submission-id <submission_id> [--test-mode]
+python main.py parse-submission \
+  --file 'data/Product_BM_ДЗ1_Решение хорошее.xlsx' \
+  --task-id task1
 ```
 
-## Test mode
+```bash
+python - <<'PY'
+from src.repository.submission_repository import SubmissionRepository
 
-`--test-mode` предназначен для ограниченного оборудования:
-
-- выбирает лёгкую модель `qwen2.5:1.5b` по умолчанию; допустима явная замена на `qwen2.5:3b`;
-- передаёт Ollama `num_ctx=4096`;
-- ограничивает каждый LLM payload до `max_chars=12000` символов.
-
-Обычный режим использует `qwen2.5:7b`, стандартное контекстное окно и не обрезает текст.
-
-## Хранение результатов
-
-```text
-storage/
-├── tasks/<task_id>.json
-├── submissions/<submission_id>.json
-└── evaluations/<submission_id>.json
+submission = SubmissionRepository().load("Product_BM_ДЗ1_Решение хорошее")
+assert submission.raw_text.strip()
+assert submission.task_id == "task1"
+assert isinstance(submission.resolved_links, list)
+print("Submission parsing OK:", submission.file_type)
+PY
 ```
 
-## Python API
+### Stage 3: Criterion Evaluation
 
-Основные точки интеграции:
+**Purpose:** Evaluate every rubric criterion sequentially, require evidence-based reasoning, calculate the total score, and persist the result.
+
+**Input:** Existing task and submission JSON artifacts, selected provider, and optional `--model-name` or `--test-mode`.
+
+**Output:** `storage/evaluations/<submission-id>.json`, validated as `EvaluationReport`, with per-criterion scores, reasoning, evidence, and summary feedback.
+
+**Verification:**
+
+```bash
+python main.py evaluate \
+  --task-id task1 \
+  --submission-id 'Product_BM_ДЗ1_Решение хорошее' \
+  --provider openrouter
+```
+
+```bash
+python - <<'PY'
+from src.repository.evaluation_repository import EvaluationRepository
+
+report = EvaluationRepository().load("Product_BM_ДЗ1_Решение хорошее")
+assert report.criterion_results
+assert 0 <= report.total_score <= report.max_total_score
+assert all(
+    0 <= result.assigned_score <= result.max_points
+    and result.reasoning.strip()
+    and result.evidence
+    for result in report.criterion_results
+)
+print("Evaluation OK:", report.total_score, "/", report.max_total_score)
+PY
+```
+
+### Stage 4: PDF Report Generation
+
+**Purpose:** Render an existing evaluation JSON and its matching task JSON as a Russian-language PDF without reading raw submission files.
+
+**Input:** An evaluation JSON path and optional output path.
+
+**Output:** `storage/reports/<evaluation-stem>.pdf` by default.
+
+**Verification:**
+
+```bash
+python main.py generate-pdf \
+  --eval-json 'storage/evaluations/Product_Fraud_ДЗ2_Решение хорошее.json'
+```
+
+## 4. Key Functions & Usage Examples
+
+### Configuration
+
+```python
+from src.config import AppConfig
+
+config = AppConfig(
+    llm_provider="openrouter",
+    model_name="qwen/qwen-2.5-72b-instruct:free",
+    test_mode=True,
+)
+print(config.effective_api_base)
+print(config.model_chain)
+```
+
+### Task parsing and storage
+
+```python
+from src.config import AppConfig
+from src.parsers.task_parser import TaskParser
+from src.repository.task_repository import TaskRepository
+
+rubric = TaskParser(AppConfig()).parse_task(
+    "data/Product_Fraud_hw2.pdf",
+    "productfraudhw2",
+)
+TaskRepository().save(rubric)
+```
+
+### Local and GitHub submission parsing
+
+```python
+from src.config import AppConfig
+from src.parsers.submission_parser import SubmissionParser
+from src.repository.submission_repository import SubmissionRepository
+
+parser = SubmissionParser(AppConfig(), "productfraudhw2")
+submission = parser.parse_submission(
+    "data/Product_Fraud_ДЗ2_Решение хорошее.docx",
+    "productfraudhw2",
+)
+SubmissionRepository().save(submission)
+
+github_submission = parser.parse_github_repository(
+    "https://github.com/ArtemCh101/test_repo"
+)
+SubmissionRepository().save(github_submission)
+```
+
+### Evaluation
 
 ```python
 from src.config import AppConfig
 from src.evaluator.grading_engine import GradingEngine
-from src.parsers.submission_parser import SubmissionParser
-from src.parsers.task_parser import TaskParser
+from src.repository.task_repository import TaskRepository
+from src.repository.submission_repository import SubmissionRepository
 
-config = AppConfig(test_mode=True)
-rubric = TaskParser(config).parse_task("task.pdf", "task-1")
-submission = SubmissionParser(config, "task-1").parse_github_repository(
-    "https://github.com/owner/repository.git"
-)
+config = AppConfig(llm_provider="openrouter")
+rubric = TaskRepository().load("productfraudhw2")
+submission = SubmissionRepository().load("test_repo")
 report = GradingEngine(config).evaluate_submission(rubric, submission, config)
+print(report.total_score, report.max_total_score)
+```
+
+### PDF generation
+
+```python
+from src.reports.pdf_generator import generate_evaluation_pdf
+
+output_path = generate_evaluation_pdf(
+    "storage/evaluations/test_repo.json",
+    "storage/reports/test_repo.pdf",
+)
+print(output_path)
 ```
