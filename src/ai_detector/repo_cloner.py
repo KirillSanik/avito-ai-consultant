@@ -13,13 +13,14 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import tempfile
 import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
+
+from common.config import git_token
 
 from ._spawn import spawn_git
 from .utils.exceptions import RepoCloneError
@@ -51,11 +52,6 @@ def _stderr_tail(stderr: bytes, limit: int = 3) -> str:
     if not lines:
         return "stderr git пуст"
     return "\n".join(lines[-limit:])
-
-
-def _git_token_from_env() -> str | None:
-    """Токен из окружения: ``AI_DETECTOR_GIT_TOKEN`` имеет приоритет над ``GITHUB_TOKEN``."""
-    return os.environ.get("AI_DETECTOR_GIT_TOKEN") or os.environ.get("GITHUB_TOKEN") or None
 
 
 def _inject_token(repo_url: str, token: str | None) -> str:
@@ -111,7 +107,7 @@ class RepoCloner:
 
     @asynccontextmanager
     async def clone(self, repo_url: str) -> AsyncIterator[Path]:
-        token = _git_token_from_env()
+        token = git_token()
         clone_url = _inject_token(repo_url, token)
         clone_started = time.perf_counter()
         logger.debug("Создание temp-каталога и запуск git clone…")

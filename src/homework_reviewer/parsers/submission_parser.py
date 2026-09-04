@@ -7,7 +7,7 @@ from urllib.parse import quote, urlparse, urlunparse
 
 import pdfplumber
 
-from homework_reviewer.config import AppConfig
+from common.config import AppConfig
 from homework_reviewer.models.submission import SubmissionData
 from homework_reviewer.parsers.docx_parser import DOCXParser
 from homework_reviewer.parsers.link_parser import LinkParser

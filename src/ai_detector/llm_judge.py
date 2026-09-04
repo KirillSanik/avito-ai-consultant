@@ -9,7 +9,6 @@ raw-текст ответа не интерпретируется (консти�
 from __future__ import annotations
 
 import logging
-import os
 import time
 
 from openai import (
@@ -21,6 +20,8 @@ from openai import (
     RateLimitError,
 )
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
+
+from common.config import llm_model
 
 from .utils.exceptions import LLMJudgementError
 from .utils.models import AIAssessmentResult, CommitInfo
@@ -43,7 +44,7 @@ class LLMJudge:
 
     def __init__(self, client: AsyncOpenAI, model: str | None = None) -> None:
         self._client = client
-        self._model = model or os.environ.get("AI_DETECTOR_LLM_MODEL") or DEFAULT_LLM_MODEL
+        self._model = model or llm_model(DEFAULT_LLM_MODEL)
 
     async def evaluate(
         self, task_criteria: str, file_tree: list[str], commits: list[CommitInfo], full_code: str
