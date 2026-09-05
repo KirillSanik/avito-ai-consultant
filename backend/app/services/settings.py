@@ -2,6 +2,8 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
+from dotenv import load_dotenv
+
 
 @dataclass(frozen=True)
 class PipelineSettings:
@@ -17,6 +19,8 @@ class PipelineSettings:
 
     @classmethod
     def from_environment(cls) -> "PipelineSettings":
+        # Не переопределяем переменные, уже заданные в окружении.
+        load_dotenv(override=False)
         return cls(
             storage_dir=Path(os.getenv("STORAGE_DIR", "./storage")),
             llm_provider=os.getenv("LLM_PROVIDER", "cloud").strip().lower(),

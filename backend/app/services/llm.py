@@ -92,13 +92,16 @@ class LLMService:
         for criterion in rubric.criteria:
             item = by_id.get(criterion.name, {})
             score = min(max(float(item.get("assigned_score", 0)), 0), criterion.max_points)
+            evidence = item.get("evidence", [])
+            if isinstance(evidence, str):
+                evidence = [evidence]
             results.append(CriterionResult(
                 criterion_id=criterion.name,
                 criterion_name=criterion.name,
                 assigned_score=score,
                 max_points=criterion.max_points,
                 reasoning=str(item.get("reasoning") or "LLM did not provide reasoning."),
-                evidence=[str(e) for e in item.get("evidence", [])],
+                evidence=[str(e) for e in evidence],
             ))
         return results
 
@@ -108,8 +111,8 @@ class LLMService:
             json.dumps({"task": task_text[:20000], "files": file_tree, "commits": commits, "code": code[: self.settings.max_input_chars]}, ensure_ascii=False),
         )
         return AIAssessmentResult(
-            ai_indicators=[str(item) for item in payload.get("ai_indicators", [])],
-            human_indicators=[str(item) for item in payload.get("human_indicators", [])],
+            ai_indicators=_normalize_str_list(payload.get("ai_indicators"), []),
+            human_indicators=_normalize_str_list(payload.get("human_indicators"), []),
             reasoning=str(payload.get("reasoning") or "AI-origin assessment unavailable."),
             status=str(payload.get("status", "yellow")).lower(),
             confidence=min(max(float(payload.get("confidence", 0)), 0), 1),
