@@ -60,7 +60,7 @@ class Settings(BaseSettings):
 
     # --- Общий лимит генерации --------------------------------------------------
     llm_max_tokens: int = Field(
-        default=16384, ge=1, description="max_tokens LLM-запросов (LLM_MAX_TOKENS); лимит вывода без усечения."
+        default=4000, ge=1, description="max_tokens LLM-запросов (LLM_MAX_TOKENS); лимит вывода без усечения."
     )
     llm_disable_thinking: bool = Field(
         default=True,
