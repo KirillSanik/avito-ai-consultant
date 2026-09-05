@@ -23,9 +23,14 @@ def generate_review_pdf(report: EvaluationReport, rubric: TaskRubric, ai_assessm
         Spacer(1, 5 * mm),
     ]
     rows = [["Критерий", "Балл", "Обоснование"]]
+    cell_style = styles["BodyText"]
     for result in report.criterion_results:
-        rows.append([result.criterion_name, f"{result.assigned_score:g}/{result.max_points:g}", result.reasoning])
-    story.append(Table(rows, colWidths=[55 * mm, 25 * mm, 95 * mm], style=TableStyle([
+        rows.append([
+            Paragraph(escape(result.criterion_name), cell_style),
+            Paragraph(f"{result.assigned_score:g}/{result.max_points:g}", cell_style),
+            Paragraph(escape(result.reasoning), cell_style),
+        ])
+    story.append(Table(rows, colWidths=[55 * mm, 25 * mm, 95 * mm], repeatRows=1, splitInRow=1, style=TableStyle([
         ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
         ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#d9e2f3")),
         ("VALIGN", (0, 0), (-1, -1), "TOP"),

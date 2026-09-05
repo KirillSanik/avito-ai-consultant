@@ -15,10 +15,11 @@ from .services.reporting import generate_review_pdf
 logger = logging.getLogger(__name__)
 
 
+redis_url = os.getenv("REDIS_URL", "")
 celery_app = Celery(
     "ai_reviewer",
-    broker=os.getenv("REDIS_URL", "redis://localhost:6379/0"),
-    backend=os.getenv("REDIS_URL", "redis://localhost:6379/0"),
+    broker=redis_url or "memory://",
+    backend=redis_url or "cache+memory://",
 )
 celery_app.conf.update(
     task_serializer="json",
@@ -26,6 +27,10 @@ celery_app.conf.update(
     accept_content=["json"],
     timezone="Europe/Moscow",
 )
+if not redis_url:
+    # Локальный запуск без Redis: задачи выполняются синхронно в процессе API.
+    celery_app.conf.task_always_eager = True
+    celery_app.conf.task_eager_propagates = False
 
 
 @celery_app.task(name="notifications.deadline_reminder")

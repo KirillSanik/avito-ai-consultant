@@ -168,20 +168,20 @@ def seed_demo_data() -> None:
         assignment.submissions = [
             Submission(
                 student_name="Анна Смирнова",
-                work_url="https://github.com/example/analytics-homework/pull/12",
+                work_url="https://github.com/ZPM07/avito-ai-test-repo",
                 stepik_url="https://stepik.org/users/1001",
                 status="in_review",
                 reviewer="Демо Ревьюер",
             ),
             Submission(
                 student_name="Михаил Орлов",
-                work_url="https://github.com/example/analytics-homework/pull/15",
+                work_url="https://github.com/ZPM07/avito-ai-test-repo",
                 stepik_url="https://stepik.org/users/1002",
                 status="pending",
             ),
             Submission(
                 student_name="Елена Волкова",
-                work_url="https://github.com/example/analytics-homework/pull/17",
+                work_url="https://github.com/ZPM07/avito-ai-test-repo",
                 stepik_url="https://stepik.org/users/1003",
                 status="reviewed",
                 reviewer="Иван Петров",
@@ -226,13 +226,13 @@ def seed_demo_data() -> None:
         second_assignment.submissions = [
             Submission(
                 student_name="Анна Смирнова",
-                work_url="https://github.com/example/analytics-homework/pull/22",
+                work_url="https://github.com/ZPM07/avito-ai-test-repo",
                 stepik_url="https://stepik.org/users/1001",
                 status="pending",
             ),
             Submission(
                 student_name="Михаил Орлов",
-                work_url="https://github.com/example/analytics-homework/pull/24",
+                work_url="https://github.com/ZPM07/avito-ai-test-repo",
                 stepik_url="https://stepik.org/users/1002",
                 status="pending",
             ),
@@ -1569,6 +1569,9 @@ def create_ai_draft(
         submission.evaluation_status = "failed"
         db.commit()
         logger.exception("evaluation.enqueue.failed submission_id=%s", submission.id)
+    # В eager-режиме (без Redis) задача уже отработала в этом процессе:
+    # перечитываем запись, чтобы в ответе были результаты, закоммиченные другой сессией.
+    db.refresh(submission)
     return submission_out_with_evaluation(submission, db)
 
 

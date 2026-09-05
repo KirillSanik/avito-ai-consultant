@@ -80,7 +80,9 @@ services:
         condition: service_healthy
 
   frontend:
-    build: ./frontend
+    build:
+      context: ./frontend
+      network: host  # <-- Добавить эту строку
     environment:
       NEXT_PUBLIC_API_URL: http://localhost:8000
     ports:
@@ -90,7 +92,9 @@ services:
         condition: service_healthy
 
   student-portal:
-    build: ./student-portal
+    build:
+      context: ./student-portal
+      network: host  # <-- Добавить эту строку
     environment:
       NEXT_PUBLIC_API_URL: http://localhost:8000
     ports:
