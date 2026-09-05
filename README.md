@@ -5,6 +5,86 @@ AI-консультант по домашним заданиям: единый F
 условия**, плюс click-CLI `homework-reviewer` для прогона каждого этапа
 отдельно (без сервера).
 
+## Unified project quick start
+
+The project is a FastAPI backend (`src/`) with a Next.js frontend
+(`frontend/`). The backend stores users, courses, tasks, uploaded files, and
+reports locally in `storage/`; the frontend calls `http://localhost:8000/api/v1`.
+
+### Prerequisites
+
+- Python 3.10+ with [`uv`](https://docs.astral.sh/uv/)
+- Node.js 18+ with `npm`
+
+### Start the backend
+
+```bash
+uv sync
+uv run main.py
+```
+
+### Start the frontend
+
+```bash
+cd frontend
+npm ci
+NEXT_PUBLIC_API_URL=http://localhost:8000/api/v1 npm run dev
+```
+
+Open `http://localhost:3000`. FastAPI documentation is at
+`http://localhost:8000/docs`.
+
+### Default demo accounts
+
+| Role | Login | Password |
+|------|-------|----------|
+| Methodist | `methodist` | `methodist` |
+| Reviewer | `reviewer` | `reviewer` |
+| Students | `student1` … `student5` | `password` |
+
+At startup, all five demo students are enrolled in every existing course, so
+course cards immediately show their actual student count.
+
+### What initializes automatically
+
+`uv run main.py` starts FastAPI on `APP_HOST:APP_PORT` (default
+`127.0.0.1:8000`). During the application lifespan it:
+
+1. Creates `storage/tasks`, `storage/submissions`, and `storage/reports`.
+2. Creates the configured SQLAlchemy database (`DATABASE_URL`), defaulting to
+   `storage/app.db`, and applies additive schema migrations for existing SQLite
+   databases.
+3. Seeds the demo methodist, reviewer, and five student accounts.
+4. Seeds sample courses/homework, enrolls demo students in every course, and
+   initializes zero-progress records for each homework.
+
+No manual database command is required on a new device. To use an existing
+PostgreSQL instance, set `DATABASE_URL` in `.env` before starting the server.
+
+### Setup on another device
+
+```bash
+git clone <repository-url>
+cd avito-ai-consultant
+cp .env.example .env
+uv sync
+uv run main.py
+```
+
+In a second terminal:
+
+```bash
+cd avito-ai-consultant/frontend
+npm ci
+NEXT_PUBLIC_API_URL=http://localhost:8000/api/v1 npm run dev
+```
+
+For a different host or LAN deployment, set `APP_HOST=0.0.0.0`, replace
+`localhost` in `NEXT_PUBLIC_API_URL` with the server's reachable address, and
+allow ports 8000 and 3000 through the device firewall. Configure
+`OPENROUTER_API_KEY` for hosted LLM reviews, or run Ollama locally with
+`ollama serve` and `ollama pull qwen2.5-coder` for the local fallback.
+
 ## Пакеты
 
 | Пакет | Назначение |
