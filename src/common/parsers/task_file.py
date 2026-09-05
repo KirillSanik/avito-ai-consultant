@@ -1,4 +1,4 @@
-"""Этап (а) разбора условия: извлечение текста из PDF/DOCX/XLSX без LLM.
+"""Этап (а) разбора условия: извлечение текста из PDF/DOCX/XLSX/MD без LLM.
 
 Вынесен в общий слой, чтобы ``Pipeline`` выполнял парсинг файла строго один
 раз на запрос до ``asyncio.gather`` (ТЗ §5.1). Синхронный метод — в async-
@@ -16,7 +16,7 @@ from common.parsers.exceptions import TaskFileError
 from common.parsers.xlsx_parser import XLSXParser
 
 #: Поддерживаемые расширения файлов с условием (ТЗ §4.1).
-SUPPORTED_TASK_EXTENSIONS: frozenset[str] = frozenset({".pdf", ".docx", ".xlsx"})
+SUPPORTED_TASK_EXTENSIONS: frozenset[str] = frozenset({".pdf", ".docx", ".xlsx", ".md"})
 
 
 def _extract_pdf_text(pdf_path: Path) -> str:
@@ -53,7 +53,7 @@ def _row_to_markdown(row: list[str]) -> str:
 
 
 def extract_task_text(path: str | Path) -> str:
-    """Полный текст условия из файла (PDF/DOCX/XLSX); LLM не используется.
+    """Полный текст условия из файла (PDF/DOCX/XLSX/MD); LLM не используется.
 
     :raises TaskFileError: файл не найден либо расширение не поддерживается.
     """
@@ -67,6 +67,8 @@ def extract_task_text(path: str | Path) -> str:
         return DOCXParser().parse(str(source))["raw_text"]
     if extension == ".xlsx":
         return XLSXParser().parse(str(source))["raw_text"]
+    if extension == ".md":
+        return source.read_text(encoding="utf-8")
     raise TaskFileError(
         f"Неподдерживаемый формат файла с условием: {extension or '(без расширения)'}; "
         f"поддерживаются: {', '.join(sorted(SUPPORTED_TASK_EXTENSIONS))}"

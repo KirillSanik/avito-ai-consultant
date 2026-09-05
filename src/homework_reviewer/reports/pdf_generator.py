@@ -31,7 +31,17 @@ def _register_font() -> str:
     return "Helvetica"
 
 
-def generate_evaluation_pdf(eval_json_path: str, output_pdf_path: str) -> str:
+#: Описания и цвет вердикта «Светофора» для раздела об использовании ИИ.
+_AI_VERDICT_LABELS: dict[str, tuple[str, str]] = {
+    "green": ("Много самостоятельной работы человека", "#2e7d32"),
+    "yellow": ("Смешанный / подозрительный результат", "#b8860b"),
+    "red": ("Явные признаки ИИ-генерации / копипаста", "#c62828"),
+}
+
+
+def generate_evaluation_pdf(
+    eval_json_path: str, output_pdf_path: str, ai_assessment: AIAssessmentResult | None = None
+) -> str:
     evaluation_path = Path(eval_json_path)
     report = EvaluationReport.model_validate_json(evaluation_path.read_text(encoding="utf-8"))
     task_path = evaluation_path.parents[1] / "tasks" / f"{report.task_id}.json"
@@ -53,7 +63,22 @@ def generate_evaluation_pdf(eval_json_path: str, output_pdf_path: str) -> str:
     small_style = ParagraphStyle("Small", parent=body_style, fontSize=9, leading=12)
     criterion_style = ParagraphStyle("Criterion", parent=body_style, fontSize=14.4, leading=18, spaceBefore=6)
     breakdown_style = ParagraphStyle("Breakdown", parent=body_style, fontSize=9, leading=12)
-    summary_style = ParagraphStyle("Summary", parent=body_style, fontSize=10, leading=14)
+    summary_style = ParagraphStyle(
+        "Summary",
+        parent=body_style,
+        fontSize=10,
+        leading=14,
+        backColor=colors.HexColor("#fff2cc"),
+        borderColor=colors.HexColor("#bf9000"),
+        borderWidth=0.7,
+        borderPadding=8,
+    )
+    ai_verdict_style = ParagraphStyle(
+        "AIVerdict", parent=body_style, fontSize=10, leading=14, spaceBefore=4, spaceAfter=6
+    )
+    ai_list_style = ParagraphStyle(
+        "AIList", parent=body_style, fontSize=9, leading=12, leftIndent=8, spaceBefore=2, spaceAfter=4
+    )
     task_title = html_escape(rubric.title if rubric else report.task_id)
     moscow_time = datetime.now(ZoneInfo("Europe/Moscow")).strftime("%H:%M")
     story = [
@@ -87,31 +112,12 @@ def generate_evaluation_pdf(eval_json_path: str, output_pdf_path: str) -> str:
     ])))
     story.extend([
         Paragraph("Краткая сводка", heading_style),
-        Table(
-            [[Paragraph(_linkify(report.summary_feedback), summary_style)]],
-            colWidths=[180 * mm],
-            style=TableStyle([
-                ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#fff2cc")),
-                ("BOX", (0, 0), (-1, -1), 1, colors.HexColor("#bf9000")),
-                ("LEFTPADDING", (0, 0), (-1, -1), 8),
-                ("RIGHTPADDING", (0, 0), (-1, -1), 8),
-                ("TOPPADDING", (0, 0), (-1, -1), 8),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
-            ]),
-        ),
+        # Используем именно Paragraph (не Table): он корректно разбивается между
+        # страницами, когда итоговый feedback длиннее высоты фрейма. Одноячеечная
+        # Table с таким текстом вызывает reportlab LayoutError.
+        Paragraph(_linkify(report.summary_feedback), summary_style),
         Paragraph("Отчёт об использовании ИИ", heading_style),
-        Table(
-            [[Paragraph("Раздел будет заполнен после подключения соответствующих сервисов.", body_style)]],
-            colWidths=[180 * mm],
-            style=TableStyle([
-                ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#f2f2f2")),
-                ("BOX", (0, 0), (-1, -1), 0.5, colors.grey),
-                ("LEFTPADDING", (0, 0), (-1, -1), 6),
-                ("RIGHTPADDING", (0, 0), (-1, -1), 6),
-                ("TOPPADDING", (0, 0), (-1, -1), 6),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
-            ]),
-        ),
+        *_ai_assessment_paragraphs(ai_assessment, ai_verdict_style, ai_list_style),
         Paragraph("Разбор по критериям", heading_style),
         HRFlowable(width="100%", thickness=0.5, color=colors.grey),
     ])
@@ -166,11 +172,37 @@ def generate_review_pdf(
         evaluation_path = evaluations / f"{report.submission_id}.json"
         evaluation_path.write_text(report.model_dump_json(), encoding="utf-8")
         (tasks / f"{report.task_id}.json").write_text(rubric.model_dump_json(), encoding="utf-8")
-        rendered = generate_evaluation_pdf(str(evaluation_path), str(output))
-    # Preserve the model verdict in the persisted PDF as metadata-adjacent JSON
-    # is intentionally avoided: ReviewResponse itself remains authoritative.
-    _ = ai_assessment
+        rendered = generate_evaluation_pdf(str(evaluation_path), str(output), ai_assessment)
     return rendered
+
+
+def _ai_assessment_paragraphs(
+    ai: AIAssessmentResult | None, verdict_style: ParagraphStyle, list_style: ParagraphStyle
+) -> list[Paragraph]:
+    """Готовит параграфы раздела «Об использовании ИИ».
+
+    Возвращает пустой список (плюс пояснение), если вердикт недоступен, чтобы
+    в PDF не оставалась статичная заглушка без данных.
+    """
+    if ai is None:
+        return [Paragraph("Информация о детекции ИИ недоступна.", list_style)]
+
+    label, color = _AI_VERDICT_LABELS.get(ai.status, (ai.status, "#333333"))
+    paragraphs: list[Paragraph] = [
+        Paragraph(
+            f'Вердикт: <b><font color="{color}">{html_escape(ai.status.upper())} — '
+            f"{html_escape(label)}</font></b> (уверенность <b>{ai.confidence:.2f}</b>)",
+            verdict_style,
+        ),
+        Paragraph(f"<b>Обоснование:</b><br/>{_linkify(ai.reasoning)}", list_style),
+    ]
+    if ai.ai_indicators:
+        ai_items = "<br/>".join(f"• {_linkify(item)}" for item in ai.ai_indicators)
+        paragraphs.append(Paragraph(f"<b>Признаки ИИ-генерации:</b><br/>{ai_items}", list_style))
+    if ai.human_indicators:
+        human_items = "<br/>".join(f"• {_linkify(item)}" for item in ai.human_indicators)
+        paragraphs.append(Paragraph(f"<b>Признаки самостоятельной работы:</b><br/>{human_items}", list_style))
+    return paragraphs
 
 
 def _linkify(text: str) -> str:

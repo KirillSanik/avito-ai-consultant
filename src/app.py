@@ -31,18 +31,14 @@ from fastapi.responses import FileResponse, JSONResponse
 from sqlalchemy.orm import Session
 
 from ai_detector.service import AIDetectionService
-from ai_detector.utils.exceptions import LLMJudgementError, RepoCloneError
 from common.clients import get_llm_client, get_openrouter_client
 from common.db.models import Course, Evaluation, Submission, SubmissionStatus, Task, User, UserRole
 from common.db.session import get_session, init_db
-from common.llm import LLMError
-from common.models import ReviewResponse, TaskCriteria, TaskRubric
+from common.models import TaskCriteria, TaskRubric
 from common.parsers import SUPPORTED_TASK_EXTENSIONS, extract_task_text, parse_task_rubric
-from common.parsers.exceptions import TaskParseError
 from common.settings import get_settings
 from core.pipeline import Pipeline
 from homework_reviewer.evaluator.grading_engine import GradingEngine
-from homework_reviewer.exceptions import EvaluationError
 from homework_reviewer.reports.pdf_generator import generate_review_pdf
 
 logger = logging.getLogger(__name__)
@@ -80,75 +76,6 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Avito AI Consultant", lifespan=lifespan)
 
 
-@app.exception_handler(RepoCloneError)
-async def _repo_clone_error_handler(request: Request, exc: RepoCloneError) -> JSONResponse:
-    logger.error("POST /review: сбой клонирования: %s", exc)
-    return _error_response(422, str(exc))
-
-
-@app.exception_handler(TaskParseError)
-async def _task_parse_error_handler(request: Request, exc: TaskParseError) -> JSONResponse:
-    logger.error("POST /review: сбой разбора условия: %s", exc)
-    return _error_response(422, str(exc))
-
-
-@app.exception_handler(LLMError)
-async def _llm_error_handler(request: Request, exc: LLMError) -> JSONResponse:
-    logger.error("POST /review: сбой LLM: %s", exc)
-    return _error_response(502, str(exc))
-
-
-@app.exception_handler(LLMJudgementError)
-async def _llm_judgement_error_handler(request: Request, exc: LLMJudgementError) -> JSONResponse:
-    logger.error("POST /review: сбой LLM-оценки детектора: %s", exc)
-    return _error_response(502, str(exc))
-
-
-@app.exception_handler(EvaluationError)
-async def _evaluation_error_handler(request: Request, exc: EvaluationError) -> JSONResponse:
-    logger.error("POST /review: сбой покритериальной оценки: %s", exc)
-    return _error_response(502, str(exc))
-
-
-async def _save_upload_to_temp(task_file: UploadFile, original_name: str) -> tuple[Path, Path]:
-    """Сохранить UploadFile во временный каталог; имя файла — исходное (stem + расширение).
-
-    Возвращает ``(каталог, путь к файлу)``: каталог удаляет вызывающий.
-    """
-    safe_stem = Path(original_name).stem or "task"
-    suffix = Path(original_name).suffix.lower()
-    temp_dir = Path(tempfile.mkdtemp(prefix=TASK_FILE_PREFIX))
-    temp_path = temp_dir / f"{safe_stem}{suffix}"
-    data = await task_file.read()
-    try:
-        await asyncio.to_thread(temp_path.write_bytes, data)
-    except BaseException:
-        shutil.rmtree(temp_dir, ignore_errors=True)
-        raise
-    return temp_dir, temp_path
-
-
-@app.post("/review", response_model=ReviewResponse)
-async def review(request: Request, repo_url: str = Form(...), task_file: UploadFile = File(...)) -> ReviewResponse:
-    """Полная проверка: детекция AI-генерации + покритериальная оценка по условию."""
-    original_name = task_file.filename or "task"
-    suffix = Path(original_name).suffix.lower()
-    if suffix not in SUPPORTED_TASK_EXTENSIONS:
-        return _error_response(
-            422,
-            f"Неподдерживаемый тип файла «{suffix or 'без расширения'}»; "
-            f"поддерживаются: {', '.join(sorted(SUPPORTED_TASK_EXTENSIONS))}",
-        )
-    pipeline: Pipeline | None = getattr(request.app.state, "pipeline", None)
-    if pipeline is None:
-        return _error_response(503, "Сервис ещё не готов к обработке запросов")
-    temp_dir, temp_path = await _save_upload_to_temp(task_file, original_name)
-    try:
-        return await pipeline.run(repo_url, temp_path)
-    finally:
-        shutil.rmtree(temp_dir, ignore_errors=True)
-
-
 def _safe_id(value: str, field: str) -> str:
     if not value or Path(value).name != value or value in {".", ".."}:
         raise HTTPException(422, f"{field} должен быть непустым идентификатором без пути")
@@ -170,8 +97,8 @@ async def _store_upload(upload: UploadFile, directory: Path, entity_id: str) -> 
 async def _download_task_file(url: str, directory: Path, entity_id: str) -> Path:
     parsed = urlparse(url)
     suffix = Path(parsed.path).suffix.lower()
-    if parsed.scheme not in {"http", "https"} or suffix not in {".pdf", ".docx"}:
-        raise HTTPException(422, "url должен быть HTTP(S)-ссылкой на PDF или DOCX")
+    if parsed.scheme not in {"http", "https"} or suffix not in SUPPORTED_TASK_EXTENSIONS:
+        raise HTTPException(422, f"url должен быть HTTP(S)-ссылкой на {', '.join(sorted(SUPPORTED_TASK_EXTENSIONS))}")
 
     def _download() -> bytes:
         with urlopen(url, timeout=20) as response:
@@ -255,9 +182,13 @@ async def create_task(
         if file
         else await _download_task_file(url or "", storage, task_id)
     )
-    if source.suffix.lower() not in {".pdf", ".docx"}:
+    if source.suffix.lower() not in SUPPORTED_TASK_EXTENSIONS:
         source.unlink(missing_ok=True)
-        raise HTTPException(422, "Для API tasks поддерживаются только PDF и DOCX")
+        raise HTTPException(
+            422,
+            "Для API tasks поддерживаются только "
+            f"{', '.join(sorted(SUPPORTED_TASK_EXTENSIONS))}",
+        )
     try:
         text = await asyncio.to_thread(extract_task_text, source)
         rubric = await parse_task_rubric(
