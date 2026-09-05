@@ -169,3 +169,8 @@ demo/
 # Образцы заданий и состояние запуска (хранятся локально, не коммитятся)
 data/
 storage/
+# Node dependencies and Next.js builds
+node_modules/
+frontend/node_modules/
+frontend/.next/
+frontend/out/
