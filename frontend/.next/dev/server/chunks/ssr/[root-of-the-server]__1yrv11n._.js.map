@@ -1,0 +1,6 @@
+{
+  "version": 3,
+  "sources": [],
+  "sections": [
+    {"offset": {"line": 46, "column": 0}, "map": {"version":3,"sources":["file:///root/talent_hack_homework_review/integrated/avito-ai-consultant/frontend/src/app/providers.tsx"],"sourcesContent":["\"use client\";\n\nimport { QueryClient, QueryClientProvider } from \"@tanstack/react-query\";\nimport { useState } from \"react\";\n\n\nexport function Providers({ children }: { children: React.ReactNode }) {\n  const [client] = useState(() => new QueryClient());\n  return <QueryClientProvider client={client}>{children}</QueryClientProvider>;\n}\n"],"names":["Providers","children","client"],"mappings":";;;;;AAEA;AAAA;AACA;AAHA;;;;AAMO,SAASA,UAAU,EAAEC,QAAQ,EAAiC;IACnE,MAAM,CAACC,OAAO,GAAG,IAAA,iNAAQ,EAAC,IAAM,IAAI,4LAAW;IAC/C,qBAAO,8OAAC,6MAAmB;QAACA,QAAQA;kBAASD;;;;;;AAC/C"}}]
+}

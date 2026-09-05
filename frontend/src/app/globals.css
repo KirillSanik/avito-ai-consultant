@@ -1,0 +1,104 @@
+@import url("https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap");
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  min-height: 100%;
+  background: #eef0f6;
+}
+
+body {
+  min-height: 100vh;
+  margin: 0;
+  color: #111827;
+  background: #eef0f6;
+  font-family: "Inter", Arial, sans-serif;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+
+input,
+textarea,
+select {
+  width: 100%;
+  border: 1px solid #dde1ed;
+  border-radius: 8px;
+  background: #f3f4f9;
+  padding: 0.625rem 0.875rem;
+  color: #111827;
+  transition: border-color 150ms, box-shadow 150ms;
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: #9ca3af;
+}
+
+textarea {
+  resize: vertical;
+}
+
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  outline: none;
+  border-color: transparent;
+  box-shadow: 0 0 0 2px #4f6bef;
+}
+
+::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  border-radius: 5px;
+  background: #d1d5db;
+}
+
+@layer components {
+  .card {
+    @apply rounded-xl border border-border bg-white shadow-sm;
+  }
+
+  .button-primary {
+    @apply inline-flex items-center justify-center rounded-lg bg-primary px-4 py-2.5 text-sm font-medium text-white transition hover:bg-primary-dark disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-slate-500;
+  }
+
+  .button-secondary {
+    @apply inline-flex items-center justify-center rounded-lg border border-border bg-white px-4 py-2.5 text-sm font-medium text-muted transition hover:border-accent hover:text-foreground;
+  }
+
+  .button-success {
+    @apply inline-flex items-center justify-center rounded-lg bg-success px-4 py-2.5 text-sm font-medium text-white transition hover:bg-emerald-600 disabled:opacity-50;
+  }
+
+  .button-warning {
+    @apply inline-flex items-center justify-center rounded-lg bg-warning px-4 py-2 text-xs font-medium text-white transition hover:bg-amber-600 disabled:opacity-50;
+  }
+
+  .field-label {
+    @apply mb-1.5 block text-xs font-medium uppercase tracking-wide text-muted;
+  }
+
+  .eyebrow {
+    @apply mb-1.5 text-xs font-semibold uppercase tracking-[0.12em] text-muted;
+  }
+}

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import enum
 
-from sqlalchemy import JSON, Enum, ForeignKey, String
+from sqlalchemy import JSON, Enum, ForeignKey, String, UniqueConstraint
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -31,6 +31,13 @@ class User(Base):
     id: Mapped[str] = mapped_column(String(128), primary_key=True)
     role: Mapped[UserRole] = mapped_column(Enum(UserRole), nullable=False)
     name: Mapped[str] = mapped_column(String(256), nullable=False)
+    # Authentication is deliberately simple for this local demo service. Do not
+    # use this field for production credentials without replacing it with a
+    # password hash and a proper authentication provider.
+    password: Mapped[str] = mapped_column(String(256), nullable=False, default="")
+    first_name: Mapped[str] = mapped_column(String(128), nullable=False, default="")
+    last_name: Mapped[str] = mapped_column(String(128), nullable=False, default="")
+    telegram: Mapped[str] = mapped_column(String(256), nullable=False, default="")
 
 
 class Course(Base):
@@ -38,6 +45,14 @@ class Course(Base):
 
     id: Mapped[str] = mapped_column(String(128), primary_key=True)
     title: Mapped[str] = mapped_column(String(256), nullable=False)
+    year: Mapped[int] = mapped_column(nullable=False, default=2026)
+    cohort: Mapped[str] = mapped_column(String(128), nullable=False, default="")
+    stream: Mapped[int] = mapped_column(nullable=False, default=1)
+    active: Mapped[bool] = mapped_column(nullable=False, default=True)
+    cover_color: Mapped[str] = mapped_column(String(16), nullable=False, default="#3B6EF5")
+    students_count: Mapped[int] = mapped_column(nullable=False, default=0)
+    description: Mapped[str] = mapped_column(String(4000), nullable=False, default="")
+    capacity: Mapped[int] = mapped_column(nullable=False, default=30)
 
 
 class Task(Base):
@@ -48,6 +63,34 @@ class Task(Base):
     title: Mapped[str] = mapped_column(String(512), nullable=False)
     rubric_json: Mapped[dict] = mapped_column(JSON, nullable=False)
     file_path: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+
+
+class CourseReviewer(Base):
+    __tablename__ = "course_reviewers"
+    __table_args__ = (UniqueConstraint("course_id", "reviewer_id", name="uq_course_reviewer"),)
+
+    id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    course_id: Mapped[str] = mapped_column(ForeignKey("courses.id"), nullable=False)
+    reviewer_id: Mapped[str] = mapped_column(ForeignKey("users.id"), nullable=False)
+
+
+class CourseEnrollment(Base):
+    __tablename__ = "course_enrollments"
+    __table_args__ = (UniqueConstraint("course_id", "student_id", name="uq_course_student"),)
+
+    id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    course_id: Mapped[str] = mapped_column(ForeignKey("courses.id"), nullable=False)
+    student_id: Mapped[str] = mapped_column(ForeignKey("users.id"), nullable=False)
+
+
+class HomeworkProgress(Base):
+    __tablename__ = "homework_progress"
+    __table_args__ = (UniqueConstraint("task_id", "student_id", name="uq_task_student_progress"),)
+
+    id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    task_id: Mapped[str] = mapped_column(ForeignKey("tasks.id"), nullable=False)
+    student_id: Mapped[str] = mapped_column(ForeignKey("users.id"), nullable=False)
+    submitted: Mapped[bool] = mapped_column(nullable=False, default=False)
 
 
 class Submission(Base):
