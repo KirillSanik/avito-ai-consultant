@@ -17,6 +17,7 @@ from pathlib import Path
 from openai import AsyncOpenAI
 
 from common.models import AIAssessmentResult, TaskCriteria
+from common.settings import Settings
 
 from .code_aggregator import LocalCodeAggregator
 from .git_metadata import GitMetadataExtractor
@@ -33,11 +34,11 @@ class AIDetectionService:
     (SRP, DI): окружение читает только ``LLMJudge`` (имя модели).
     """
 
-    def __init__(self, llm_client: AsyncOpenAI) -> None:
+    def __init__(self, llm_client: AsyncOpenAI, settings: Settings | None = None) -> None:
         self._cloner = RepoCloner()
         self._extractor = GitMetadataExtractor()
         self._aggregator = LocalCodeAggregator()
-        self._judge = LLMJudge(llm_client)
+        self._judge = LLMJudge(llm_client, settings=settings)
 
     async def analyze(self, task_criteria: str | TaskCriteria, repo_url: str) -> AIAssessmentResult:
         """Полный анализ по URL (обратная совместимость): временный клон → ``analyze_from_path``.

@@ -27,6 +27,7 @@ from common.llm import (
     LLMResilienceError,
     call_with_resilience,
     is_model_unavailable,
+    is_openrouter_daily_quota_exhausted,
     is_retryable_error,
 )
 
@@ -92,6 +93,12 @@ def test_is_model_unavailable_classification(error: BaseException, expected: boo
     assert is_model_unavailable(error) is expected
 
 
+def test_daily_quota_detection_requires_429_and_account_marker() -> None:
+    assert is_openrouter_daily_quota_exhausted(make_status_error(429, "openrouter_free_tier_daily exhausted"))
+    assert not is_openrouter_daily_quota_exhausted(make_status_error(429, "temporary rate limit"))
+    assert not is_openrouter_daily_quota_exhausted(make_status_error(503, "openrouter_free_tier_daily"))
+
+
 async def test_success_on_first_attempt_returns_result() -> None:
     calls: list[str] = []
 
@@ -135,6 +142,30 @@ async def test_not_found_switches_to_next_model_in_chain() -> None:
     result = await call_with_resilience(factory, CHAIN, sleep=sleep.sleep)
     assert result == "ok"
     assert calls == ["model-a", "model-b"]
+
+
+async def test_daily_quota_bypasses_remaining_openrouter_models_for_local_client() -> None:
+    remote_calls: list[str] = []
+    local_calls: list[str] = []
+
+    async def remote(model: str) -> str:
+        remote_calls.append(model)
+        raise make_status_error(429, "openrouter_free_tier_daily exhausted")
+
+    async def local(model: str) -> str:
+        local_calls.append(model)
+        return "local-ok"
+
+    result = await call_with_resilience(
+        remote,
+        CHAIN,
+        sleep=SleepRecorder().sleep,
+        local_coro_factory=local,
+        local_model_chain=("qwen2.5-coder",),
+    )
+    assert result == "local-ok"
+    assert remote_calls == ["model-a"]
+    assert local_calls == ["qwen2.5-coder"]
 
 
 async def test_fatal_error_raises_llm_request_error_without_retry() -> None:

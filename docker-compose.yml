@@ -1,0 +1,39 @@
+services:
+  web:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      APP_HOST: 0.0.0.0
+      APP_PORT: 8000
+      DATABASE_URL: postgresql+psycopg://reviewer:reviewer@db:5432/homework_reviewer
+      STORAGE_DIR: /app/storage
+      # Set provider credentials in an uncommitted .env file for real LLM review.
+      LLM_PROVIDER: ${LLM_PROVIDER:-ollama}
+      API_BASE: ${API_BASE:-http://host.docker.internal:11434/v1}
+      AI_DETECTOR_LLM_PROVIDER: ${AI_DETECTOR_LLM_PROVIDER:-local}
+      AI_DETECTOR_LLM_BASE_URL: ${AI_DETECTOR_LLM_BASE_URL:-http://host.docker.internal:11434/v1}
+    volumes:
+      - ./storage:/app/storage
+    depends_on:
+      db:
+        condition: service_healthy
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: homework_reviewer
+      POSTGRES_USER: reviewer
+      POSTGRES_PASSWORD: reviewer
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U reviewer -d homework_reviewer"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  postgres_data:

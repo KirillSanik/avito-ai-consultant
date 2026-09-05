@@ -42,7 +42,7 @@ AI-консультант по домашним заданиям: единый F
 | Python | ≥ 3.10 (`.python-version` — 3.13) | `requires-python` в `pyproject.toml` |
 | `uv` | последняя стабильная | управление окружением и зависимостями |
 | `git` CLI | установлен и доступен в PATH | клонирование репозиториев (без GitHub API) |
-| LLM | локальный OpenAI-совместимый сервер (текущий `.env`: `localhost:8075`) и/или ключ OpenRouter | оценка |
+| LLM | Ollama/OpenAI-совместимый сервер на `http://localhost:11434/v1` и/или ключ OpenRouter | оценка |
 
 ## Установка
 
@@ -59,40 +59,66 @@ uv sync
 `src/common/settings.py`. Секреты (ключи, токены) в README и в коммитимом
 `.env.example` не хранятся — только из локального `.env`/окружения.
 
-| Переменная | Обязательна | Дефолт (код) | В текущем `.env` | Действие |
-|------------|-------------|--------------|------------------|----------|
-| `OPENROUTER_API_KEY` | да, только при провайдере `openrouter` | — | не задан (обойдётся без ключа) | ключ LLM OpenRouter |
-| `LLM_PROVIDER` | нет | `openrouter` | `ollama` | LLM ревьюера: `openrouter` \| `ollama` |
-| `API_BASE` | нет | — (эффективно: OpenRouter / `http://localhost:11434/v1` по провайдеру) | `http://localhost:8075/v1` | адрес LLM-сервера ревьюера |
-| `API_KEY` | нет | — | не задан | ключ LLM-сервера ревьюера |
-| `MODEL_NAME` | нет | `qwen/qwen-2.5-72b-instruct:free` | `qwen3.8-27b-fp8` | модель ревьюера; при сбое на `openrouter` — резервная цепочка (`common.llm.OPENROUTER_FREE_MODELS`) |
-| `AI_DETECTOR_LLM_PROVIDER` | нет | `local` | — (т.е. `local`) | LLM детектора: `local` (OpenAI-совместимый сервер) \| `openrouter` |
-| `AI_DETECTOR_LLM_MODEL` | указать при `local` | `local-model` (заглушка) | `qwen3.8-27b-fp8` | модель детектора: имя модели на локальном сервере |
-| `AI_DETECTOR_LLM_BASE_URL` | нет | — (эффективно: OpenRouter / `http://localhost:11434/v1`) | `http://localhost:8075/v1` | адрес LLM-сервера детектора |
-| `AI_DETECTOR_LLM_API_KEY` | нет | — (заглушка `not-set`) | не задан | ключ LLM-сервера детектора |
-| `LLM_MAX_TOKENS` | нет | `16384` | — | `max_tokens` LLM-запросов |
-| `LLM_DISABLE_THINKING` | нет | `true` | — | отключает reasoning-режим Qwen3 (ускоряет ответ) |
-| `GITHUB_TOKEN` | только для приватных репозиториев | — | не задан (публичные репо) | токен клонирования (оба модуля) |
-| `AI_DETECTOR_GIT_TOKEN` | нет | — | — | переопределение токена детектора (приоритет над `GITHUB_TOKEN`) |
-| `APP_HOST` | нет | `127.0.0.1` | — | хост запуска uvicorn |
-| `APP_PORT` | нет | `8000` | `8765` | порт запуска uvicorn |
-| `APP_WORKERS` | нет | `1` | — | число workers uvicorn |
-| `TEST_MODE` | нет | `false` | — | тест-режим: усечение входного текста |
+| Переменная | Дефолт | Действие |
+|------------|---------|----------|
+| `OPENROUTER_API_KEY` | — | Обязателен, когда `LLM_PROVIDER=openrouter`. |
+| `LLM_PROVIDER` | `openrouter` | Основной провайдер ревьюера: `openrouter` или `ollama`. |
+| `MODEL_NAME` | `google/gemma-4-31b-it:free` | Первая модель OpenRouter либо локальная модель Ollama. |
+| `API_BASE` | провайдер-зависимый | Адрес основного OpenAI-совместимого API; для Ollama: `http://localhost:11434/v1`. |
+| `AI_DETECTOR_LLM_PROVIDER` | `local` | Провайдер детектора: `openrouter` или `local`. |
+| `AI_DETECTOR_LLM_MODEL` | `google/gemma-4-31b-it:free` | Модель детектора. |
+| `AI_DETECTOR_LLM_BASE_URL` | провайдер-зависимый | Для локального детектора: `http://localhost:11434/v1`. |
+| `OLLAMA_FALLBACK_BASE_URL` | `http://localhost:11434/v1` | Независимый локальный fallback после суточной квоты OpenRouter. |
+| `OLLAMA_FALLBACK_MODEL` | `qwen2.5-coder` | Модель Ollama для quota fallback. |
+| `DATABASE_URL` | `sqlite:///./storage/app.db` | SQLAlchemy URL базы данных. |
+| `STORAGE_DIR` | `./storage` | Корень персистентных файлов. |
+| `APP_HOST` / `APP_PORT` | `127.0.0.1` / `8000` | Адрес Uvicorn. |
+
+Цепочка OpenRouter при `LLM_PROVIDER=openrouter`:
+
+```text
+google/gemma-4-31b-it:free → nvidia/nemotron-3-super-120b-a12b:free →
+minimax/minimax-m3:free → poolside/laguna-s-2.1:free →
+z-ai/glm-5.2:free → openrouter/free
+```
+
+При `429` с признаком суточной free-tier квоты сервис сразу пропускает
+оставшиеся модели OpenRouter и вызывает локальный Ollama fallback. Обычные
+временные 429 продолжают использовать стандартные ретраи.
 
 ## Запуск сервиса
 
 ```bash
 uv run main.py
-# → FastAPI на http://127.0.0.1:8765
+# → FastAPI на http://127.0.0.1:8000
 ```
 
-С текущим `.env` inline-переменные не нужны: ревьюер и детектор оба работают
-через локальный LLM-сервер `http://localhost:8075/v1` (провайдер `ollama`,
-модель `qwen3.8-27b-fp8`), порт сервиса — `8765`.
+### Локальный Ollama
 
-Чтобы переключиться на OpenRouter: `LLM_PROVIDER=openrouter` +
-`OPENROUTER_API_KEY` (и при необходимости `MODEL_NAME`,
-`AI_DETECTOR_LLM_PROVIDER=openrouter`).
+В отдельном терминале установите и запустите модель:
+
+```bash
+ollama serve
+ollama pull qwen2.5-coder
+```
+
+Затем в терминале сервиса:
+
+```bash
+export LLM_PROVIDER=ollama
+export API_BASE=http://localhost:11434/v1
+export MODEL_NAME=qwen2.5-coder
+export AI_DETECTOR_LLM_PROVIDER=local
+export AI_DETECTOR_LLM_BASE_URL=http://localhost:11434/v1
+export AI_DETECTOR_LLM_MODEL=qwen2.5-coder
+export OLLAMA_FALLBACK_BASE_URL=http://localhost:11434/v1
+export OLLAMA_FALLBACK_MODEL=qwen2.5-coder
+uv run main.py
+```
+
+Для OpenRouter укажите `OPENROUTER_API_KEY` в локальном `.env`, установите
+`LLM_PROVIDER=openrouter` и `AI_DETECTOR_LLM_PROVIDER=openrouter`. Ollama
+остаётся доступен для автоматического quota fallback.
 
 ### `POST /review`
 
@@ -200,4 +226,8 @@ asyncio.run(main())
 ```bash
 uv run pytest                      # pytest + pytest-asyncio, coverage-gate --cov-fail-under=30
 uv run ruff check src tests        # линтер
+
+# Реальные OpenRouter-тесты не запускаются по умолчанию и требуют ключа.
+RUN_LIVE_OPENROUTER=1 uv run pytest -s tests/integration/test_live_openrouter_data.py
+RUN_LIVE_OPENROUTER=1 uv run pytest -s tests/integration/test_live_http_endpoints.py
 ```
