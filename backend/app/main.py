@@ -844,6 +844,7 @@ def submit_student_work(
             status_code=status.HTTP_409_CONFLICT,
             detail="Работа уже отправлена; повторная отправка недоступна",
         )
+    source_type = "github" if "github.com" in payload.work_url.lower() else "url"
     submission = Submission(
         assignment_id=assignment_id,
         student_user_id=student.id,
@@ -851,14 +852,22 @@ def submit_student_work(
         work_url=payload.work_url,
         stepik_url="",
         status="pending",
-        source_type="github" if "github.com" in payload.work_url.lower() else "url",
-        evaluation_status="not_requested",
+        source_type=source_type,
+        evaluation_status="queued",
     )
     db.add(submission)
     db.flush()
     assign_new_submission(submission, assignment_id, db)
     db.commit()
     db.refresh(submission)
+    try:
+        evaluate_submission_task.apply_async(args=[submission.id], ignore_result=True, retry=False)
+        logger.info("evaluation.enqueue.accepted submission_id=%s trigger=student_submit", submission.id)
+    except Exception as exc:
+        submission.evaluation_status = "failed"
+        db.commit()
+        logger.exception("evaluation.enqueue.failed submission_id=%s trigger=student_submit", submission.id)
+        raise HTTPException(status_code=503, detail="Не удалось поставить AI-проверку в очередь") from exc
     return StudentSubmissionOut.model_validate(submission, from_attributes=True)
 
 
@@ -1128,9 +1137,16 @@ def create_assignment(
         criteria_url=payload.criteria_url.strip(),
         criteria=[item.model_dump() for item in payload.criteria],
         reviewer_guide=payload.reviewer_guide.strip(),
+        task_text=payload.reviewer_guide.strip(),
+        rubric_status="fallback",
+        criteria_version=1,
     )
     db.add(assignment)
     db.flush()
+    assignment.rubric_json = fallback_rubric(
+        str(assignment.id), assignment.title, assignment.task_text, assignment.criteria
+    ).model_dump(mode="json")
+    logger.info("task.rubric.persisted assignment_id=%s status=fallback trigger=assignment_create", assignment.id)
     for user_id in dict.fromkeys(payload.reviewer_user_ids):
         attach_homework_reviewer(assignment, user_id, db)
     rebalance_assignment_submissions(assignment.id, db)
@@ -1180,6 +1196,7 @@ def upload_assignment_task_file(
             )
             assignment.rubric_status = "completed"
         except Exception:
+            logger.exception("task.rubric.llm_failed assignment_id=%s", assignment.id)
             rubric = fallback
             assignment.rubric_status = "fallback"
     except Exception as exc:
@@ -1212,6 +1229,11 @@ def upload_assignment_task_file(
         criteria=assignment.criteria,
         reviewer_guide=assignment.reviewer_guide,
         submissions=[SubmissionOut.model_validate(item) for item in assignment.submissions],
+        task_file_path=assignment.task_file_path,
+        rubric_json=assignment.rubric_json,
+        task_text=assignment.task_text,
+        rubric_status=assignment.rubric_status,
+        criteria_version=assignment.criteria_version,
     )
 
 
@@ -1316,6 +1338,11 @@ def get_assignment(
         criteria=assignment.criteria,
         reviewer_guide=assignment.reviewer_guide,
         submissions=[SubmissionOut.model_validate(item) for item in submissions],
+        task_file_path=assignment.task_file_path,
+        rubric_json=assignment.rubric_json,
+        task_text=assignment.task_text,
+        rubric_status=assignment.rubric_status,
+        criteria_version=assignment.criteria_version,
     )
 
 
@@ -1531,6 +1558,8 @@ def submission_out_with_evaluation(submission: Submission, db: Session) -> Submi
         output.review_json = evaluation.review_json
         output.ai_assessment_json = evaluation.ai_assessment_json
         output.pdf_report_path = evaluation.pdf_report_path
+        output.evaluation_error = evaluation.error_message
+        output.has_pdf = bool(evaluation.pdf_report_path)
     return output
 
 
@@ -1563,7 +1592,7 @@ def create_ai_draft(
     db.commit()
     db.refresh(submission)
     try:
-        evaluate_submission_task.apply_async(args=[submission.id], ignore_result=True)
+        evaluate_submission_task.apply_async(args=[submission.id], ignore_result=True, retry=False)
         logger.info("evaluation.enqueue.accepted submission_id=%s", submission.id)
     except Exception:
         submission.evaluation_status = "failed"
@@ -2022,6 +2051,7 @@ def enqueue_deadline_reminder(
     return {"status": "queued", "task_id": task.id}
 
 
+@app.get("/api/submissions/{submission_id}/pdf")
 @app.get("/api/submissions/{submission_id}/report.pdf")
 def download_report(
     submission_id: int,

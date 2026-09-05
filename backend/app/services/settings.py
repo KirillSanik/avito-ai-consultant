@@ -19,10 +19,10 @@ class PipelineSettings:
     def from_environment(cls) -> "PipelineSettings":
         return cls(
             storage_dir=Path(os.getenv("STORAGE_DIR", "./storage")),
-            llm_provider=os.getenv("LLM_PROVIDER", "cloud"),
-            model_name=os.getenv("LLM_MODEL", "qwen/qwen3.8-flash"),
-            polza_api_key=os.getenv("POLZA_API_KEY"),
-            polza_base_url=os.getenv("POLZA_BASE_URL", "https://polza.ai/api/v1"),
+            llm_provider=os.getenv("LLM_PROVIDER", "cloud").strip().lower(),
+            model_name=os.getenv("LLM_MODEL", "qwen/qwen3.8-flash").strip(),
+            polza_api_key=(os.getenv("POLZA_API_KEY") or "").strip() or None,
+            polza_base_url=os.getenv("POLZA_BASE_URL", "https://polza.ai/api/v1").strip(),
             ollama_base_url=os.getenv("OLLAMA_BASE_URL", "http://localhost:11434/v1"),
             ollama_model=os.getenv("OLLAMA_MODEL", "qwen2.5-coder"),
             github_token=os.getenv("GITHUB_TOKEN"),

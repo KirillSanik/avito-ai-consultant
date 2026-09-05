@@ -156,6 +156,8 @@ export type Submission = {
     human_indicators: string[];
   } | null;
   pdf_report_path?: string | null;
+  evaluation_error?: string | null;
+  has_pdf?: boolean;
 };
 
 export type Assignment = {
