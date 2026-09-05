@@ -12,7 +12,7 @@ PoC рабочего места ревьюера и методиста для п
 ## Запуск через Docker
 
 Требуется Docker Engine с Docker Compose v2. Для AI-проверки укажите
-`OPENROUTER_API_KEY` в корневом файле `.env`:
+`POLZA_API_KEY` в корневом файле `.env`:
 
 ```bash
 cp backend/.env.example .env
@@ -91,11 +91,15 @@ celery -A app.tasks.celery_app worker --loglevel=info
 отчёт, AI-оценка происхождения работы и постоянный PDF по адресу
 `/api/submissions/{submission_id}/report.pdf`.
 
-Для запуска реальной оценки обязательны `OPENROUTER_API_KEY` и доступная
-модель OpenRouter. Установите `LLM_PROVIDER=ollama` для OpenAI-совместимого
-локального Ollama-сервера; при этом задаются `OLLAMA_BASE_URL` и
-`OLLAMA_MODEL`. `GITHUB_TOKEN` является опциональным для публичных и
-необходимым для приватных репозиториев.
+Для запуска реальной оценки доступны два варианта LLM-провайдера:
+
+- `LLM_PROVIDER=cloud` (по умолчанию) — polza.ai, требуются `POLZA_API_KEY`
+  и доступная модель `LLM_MODEL` (например, `qwen/qwen3.8-flash`).
+- `LLM_PROVIDER=local` — локальный OpenAI-совместимый Ollama-сервер,
+  при этом задаются `OLLAMA_BASE_URL` и `OLLAMA_MODEL`.
+
+`GITHUB_TOKEN` является опциональным для публичных и необходимым для
+приватных репозиториев.
 
 ## Реализованный сценарий
 

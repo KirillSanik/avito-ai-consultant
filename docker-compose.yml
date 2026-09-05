@@ -18,14 +18,17 @@ services:
 
   backend:
     build: ./backend
+    env_file:
+      - .env
     environment:
       DATABASE_URL: postgresql+psycopg://ai_reviewer:ai_reviewer@postgres:5432/ai_reviewer
       REDIS_URL: redis://redis:6379/0
       SEED_DEMO_DATA: "false"
       STORAGE_DIR: /app/storage
-      LLM_PROVIDER: ${LLM_PROVIDER:-openrouter}
-      LLM_MODEL: ${LLM_MODEL:-google/gemma-3-27b-it:free}
-      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      LLM_PROVIDER: ${LLM_PROVIDER:-cloud}
+      LLM_MODEL: ${LLM_MODEL:-qwen/qwen3.8-flash}
+      POLZA_API_KEY: ${POLZA_API_KEY:-}
+      POLZA_BASE_URL: ${POLZA_BASE_URL:-https://polza.ai/api/v1}
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434/v1}
       OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen2.5-coder}
       LLM_MAX_INPUT_CHARS: ${LLM_MAX_INPUT_CHARS:-60000}
@@ -52,13 +55,16 @@ services:
   worker:
     build: ./backend
     command: celery -A app.tasks.celery_app worker --loglevel=info
+    env_file:
+      - .env
     environment:
       DATABASE_URL: postgresql+psycopg://ai_reviewer:ai_reviewer@postgres:5432/ai_reviewer
       REDIS_URL: redis://redis:6379/0
       STORAGE_DIR: /app/storage
-      LLM_PROVIDER: ${LLM_PROVIDER:-openrouter}
-      LLM_MODEL: ${LLM_MODEL:-google/gemma-3-27b-it:free}
-      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      LLM_PROVIDER: ${LLM_PROVIDER:-cloud}
+      LLM_MODEL: ${LLM_MODEL:-qwen/qwen3.8-flash}
+      POLZA_API_KEY: ${POLZA_API_KEY:-}
+      POLZA_BASE_URL: ${POLZA_BASE_URL:-https://polza.ai/api/v1}
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434/v1}
       OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen2.5-coder}
       LLM_MAX_INPUT_CHARS: ${LLM_MAX_INPUT_CHARS:-60000}

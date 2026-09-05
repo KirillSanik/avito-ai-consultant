@@ -58,3 +58,4 @@ Thumbs.db
 storage/
 tmp/
 cloned_repos/
+data/

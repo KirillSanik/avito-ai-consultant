@@ -11,12 +11,17 @@ from .settings import PipelineSettings
 class LLMService:
     def __init__(self, settings: PipelineSettings) -> None:
         self.settings = settings
-        if settings.llm_provider == "ollama":
+        if self.is_local:
             self.client = AsyncOpenAI(base_url=settings.ollama_base_url, api_key="ollama")
             self.model = settings.ollama_model
         else:
-            self.client = AsyncOpenAI(base_url="https://openrouter.ai/api/v1", api_key=settings.openrouter_api_key)
+            self.client = AsyncOpenAI(base_url=settings.polza_base_url, api_key=settings.polza_api_key)
             self.model = settings.model_name
+
+    @property
+    def is_local(self) -> bool:
+        """True для локального провайдера (local/ollama), иначе — облако (cloud/polza)."""
+        return self.settings.llm_provider in ("local", "ollama")
 
     async def parse_rubric(self, task_id: str, title: str, text: str, fallback: TaskRubric) -> TaskRubric:
         payload = await self._json(
@@ -67,8 +72,8 @@ class LLMService:
         )
 
     async def _json(self, system: str, user: str) -> dict:
-        if self.settings.llm_provider != "ollama" and not self.settings.openrouter_api_key:
-            raise RuntimeError("OPENROUTER_API_KEY is required for LLM evaluation")
+        if not self.is_local and not self.settings.polza_api_key:
+            raise RuntimeError("POLZA_API_KEY is required for LLM cloud evaluation")
         response = await self.client.chat.completions.create(
             model=self.model,
             response_format={"type": "json_object"},
