@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
 
 import { homeworkApi } from "@/lib/api";
 import { activityLogger } from "@/lib/logger";
@@ -21,13 +21,25 @@ export function ReviewerHomework({
   const [clarification, setClarification] = useState("");
   const [showClarification, setShowClarification] = useState(false);
   const [current, setCurrent] = useState<Submission | null>(null);
+  const pollAttempts = useRef(0);
+  const [pollTimedOut, setPollTimedOut] = useState(false);
+  useEffect(() => {
+    pollAttempts.current = 0;
+    setPollTimedOut(false);
+  }, [current?.id]);
   const evaluation = useQuery({
     queryKey: ["submission-evaluation", current?.id],
     queryFn: () => homeworkApi.getSubmission(current!.id),
     enabled: current !== null,
     refetchInterval: (query) => {
       const status = query.state.data?.evaluation_status;
-      return status === "queued" || status === "processing" ? 2000 : false;
+      if (status !== "queued" && status !== "processing") return false;
+      pollAttempts.current += 1;
+      if (pollAttempts.current >= 30) {
+        setPollTimedOut(true);
+        return false;
+      }
+      return 2000;
     },
   });
   const activeSubmission = evaluation.data ?? current;
@@ -210,6 +222,7 @@ export function ReviewerHomework({
             key={`${activeSubmission.id}-${activeSubmission.evaluation_status}-${activeSubmission.latest_evaluation_id ?? "edit"}`}
             submission={activeSubmission}
             criteria={assignment.criteria}
+            pollTimedOut={pollTimedOut}
             onCancel={() => setCurrent(null)}
             onSaved={async () => {
               setCurrent(null);
@@ -226,11 +239,13 @@ export function ReviewerHomework({
 function ReviewEditor({
   submission,
   criteria,
+  pollTimedOut,
   onCancel,
   onSaved,
 }: {
   submission: Submission;
   criteria: Criterion[];
+  pollTimedOut: boolean;
   onCancel: () => void;
   onSaved: () => Promise<void>;
 }) {
@@ -323,9 +338,12 @@ function ReviewEditor({
           />
         </div>
 
+        {pollTimedOut && submission.evaluation_status !== "completed" && submission.evaluation_status !== "failed" && (
+          <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-danger">Не удалось дождаться результата AI-проверки за 60 секунд.</div>
+        )}
         {submission.evaluation_status && submission.evaluation_status !== "completed" && (
           <div className={`rounded-lg border p-3 text-sm ${submission.evaluation_status === "failed" ? "border-red-200 bg-red-50 text-danger" : "border-amber-200 bg-amber-50 text-warning"}`}>
-            {submission.evaluation_status === "failed" ? "AI-проверка завершилась ошибкой." : "AI-проверка выполняется. Результаты появятся автоматически."}
+            {submission.evaluation_status === "failed" ? `AI-проверка завершилась ошибкой: ${submission.evaluation_error ?? "неизвестная ошибка"}` : "AI-проверка выполняется. Результаты появятся автоматически."}
           </div>
         )}
 

@@ -15,7 +15,10 @@ class LLMService:
             self.client = AsyncOpenAI(base_url=settings.ollama_base_url, api_key="ollama")
             self.model = settings.ollama_model
         else:
-            self.client = AsyncOpenAI(base_url=settings.polza_base_url, api_key=settings.polza_api_key)
+            self.client = AsyncOpenAI(
+                base_url=settings.polza_base_url,
+                api_key=settings.polza_api_key or "missing-polza-api-key",
+            )
             self.model = settings.model_name
 
     @property
@@ -73,7 +76,7 @@ class LLMService:
 
     async def _json(self, system: str, user: str) -> dict:
         if not self.is_local and not self.settings.polza_api_key:
-            raise RuntimeError("POLZA_API_KEY is required for LLM cloud evaluation")
+            raise RuntimeError("POLZA_API_KEY is required for cloud model evaluation")
         response = await self.client.chat.completions.create(
             model=self.model,
             response_format={"type": "json_object"},

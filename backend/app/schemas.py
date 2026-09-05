@@ -155,6 +155,8 @@ class SubmissionOut(BaseModel):
     review_json: dict | None = None
     ai_assessment_json: dict | None = None
     pdf_report_path: str | None = None
+    evaluation_error: str | None = None
+    has_pdf: bool = False
 
 
 class AssignmentOut(BaseModel):

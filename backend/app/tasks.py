@@ -25,6 +25,8 @@ celery_app.conf.update(
     result_serializer="json",
     accept_content=["json"],
     timezone="Europe/Moscow",
+    broker_connection_timeout=2,
+    broker_connection_retry=False,
 )
 
 
@@ -61,9 +63,13 @@ def deadline_reminder(course: str, assignment: str, deadline: str) -> dict[str, 
 @celery_app.task(name="evaluations.evaluate_submission")
 def evaluate_submission_task(submission_id: int) -> dict[str, object]:
     logger.info("evaluation.task.started submission_id=%s", submission_id)
-    with SessionLocal() as db:
+    db = SessionLocal()
+    evaluation = None
+    submission = None
+    try:
         submission = db.get(Submission, submission_id)
         if submission is None:
+            db.rollback()
             return {"status": "missing", "submission_id": submission_id}
         assignment = submission.assignment
         if assignment is None:
@@ -77,9 +83,9 @@ def evaluate_submission_task(submission_id: int) -> dict[str, object]:
         )
         db.add(evaluation)
         submission.evaluation_status = "processing"
-        logger.info("evaluation.status.processing submission_id=%s evaluation_id=%s", submission.id, evaluation.id)
         db.commit()
         db.refresh(evaluation)
+        logger.info("evaluation.status.processing submission_id=%s evaluation_id=%s", submission.id, evaluation.id)
         try:
             rubric = TaskRubric.model_validate(assignment.rubric_json or {
                 "task_id": str(assignment.id),
@@ -131,6 +137,7 @@ def evaluate_submission_task(submission_id: int) -> dict[str, object]:
             db.commit()
             return {"status": "completed", "submission_id": submission_id, "evaluation_id": evaluation.id}
         except Exception as exc:
+            db.rollback()
             evaluation.status = "failed"
             evaluation.error_message = str(exc)[:4000]
             evaluation.completed_at = datetime.now(timezone.utc)
@@ -138,3 +145,21 @@ def evaluate_submission_task(submission_id: int) -> dict[str, object]:
             logger.exception("evaluation.status.failed submission_id=%s evaluation_id=%s", submission.id, evaluation.id)
             db.commit()
             return {"status": "failed", "submission_id": submission_id, "evaluation_id": evaluation.id}
+    except Exception as exc:
+        db.rollback()
+        logger.exception("evaluation.task.unhandled submission_id=%s", submission_id)
+        if submission is not None:
+            submission.evaluation_status = "failed"
+            if evaluation is None:
+                evaluation = Evaluation(submission_id=submission.id, status="failed")
+                db.add(evaluation)
+            evaluation.status = "failed"
+            evaluation.error_message = str(exc)[:4000]
+            evaluation.completed_at = datetime.now(timezone.utc)
+            try:
+                db.commit()
+            except Exception:
+                db.rollback()
+        return {"status": "failed", "submission_id": submission_id, "reason": str(exc)[:4000]}
+    finally:
+        db.close()

@@ -56,14 +56,20 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const method = init?.method ?? "GET";
   const started = Date.now();
   activityLogger.info("api.request", { method, path });
-  const response = await fetch(`${API_URL}${path}`, {
-    ...init,
-    headers: {
-      "Content-Type": "application/json",
-      ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
-      ...init?.headers,
-    },
-  });
+  let response: Response;
+  try {
+    response = await fetch(`${API_URL}${path}`, {
+      ...init,
+      headers: {
+        "Content-Type": "application/json",
+        ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+        ...init?.headers,
+      },
+    });
+  } catch (error) {
+    activityLogger.error("api.network_error", { method, path, error: String(error) });
+    throw new Error("Сервис временно недоступен. Повторите попытку.");
+  }
 
   if (!response.ok) {
     activityLogger.error("api.response.error", { method, path, status: response.status, durationMs: Date.now() - started });
