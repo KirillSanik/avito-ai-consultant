@@ -34,19 +34,27 @@ class Settings(BaseSettings):
     app_host: str = Field(default="127.0.0.1", description="Хост запуска uvicorn.")
     app_port: int = Field(default=8000, ge=1, le=65535, description="Порт запуска uvicorn.")
     app_workers: int = Field(default=1, ge=1, description="Число workers uvicorn.")
+    database_url: str = Field(default="sqlite:///./storage/app.db", description="SQLAlchemy URL (DATABASE_URL).")
+    storage_dir: str = Field(default="./storage", description="Корень persistent uploads/reports (STORAGE_DIR).")
 
     # --- LLM ревьюера (openrouter / ollama) ------------------------------------
     llm_provider: Literal["openrouter", "ollama"] = Field(default="openrouter")
-    model_name: str = Field(default="qwen/qwen-2.5-72b-instruct:free")
+    model_name: str = Field(default="google/gemma-4-31b-it:free")
     api_base: str | None = Field(default=None, description="Переопределение base_url ревьюера.")
     api_key: str | None = Field(default=None, description="Переопределение API-ключа ревьюера.")
     openrouter_api_key: str | None = Field(default=None)
+    ollama_fallback_base_url: str = Field(default="http://localhost:11434/v1")
+    ollama_fallback_model: str = Field(default="qwen2.5-coder")
+    ollama_fallback_api_key: str = Field(default="ollama")
 
     # --- LLM детектора (локальный OpenAI-совместимый сервер или OpenRouter) ----
     ai_detector_llm_provider: Literal["local", "openrouter"] = Field(
         default="local", description="Провайдер детектора (AI_DETECTOR_LLM_PROVIDER): local | openrouter."
     )
-    ai_detector_llm_model: str = Field(default="local-model", description="Модель детектора (AI_DETECTOR_LLM_MODEL).")
+    ai_detector_llm_model: str = Field(
+        default="google/gemma-4-31b-it:free",
+        description="Модель детектора (AI_DETECTOR_LLM_MODEL).",
+    )
     ai_detector_llm_base_url: str | None = Field(default=None, description="Base URL локального LLM-сервера детектора.")
     ai_detector_llm_api_key: str | None = Field(default=None, description="API-ключ LLM-сервера детектора.")
 
@@ -102,6 +110,11 @@ class Settings(BaseSettings):
         if self.llm_provider != "openrouter":
             return (self.model_name,)
         return tuple(dict.fromkeys((self.model_name, *OPENROUTER_FREE_MODELS)))
+
+    @property
+    def ollama_fallback_chain(self) -> tuple[str, ...]:
+        """Local models used only after an account-wide OpenRouter free-tier quota error."""
+        return (self.ollama_fallback_model,)
 
     # --- Детектор: эффективные подключения и цепочка моделей --------------------
 

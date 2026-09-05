@@ -26,6 +26,13 @@ DEFAULT_TIMEOUT_SECONDS = 300.0
 DEFAULT_MAX_RETRIES = 1
 
 
+def _ollama_fallback_client(settings: Settings) -> instructor.Instructor:
+    """Create the local client lazily so normal OpenRouter parsing has no local dependency."""
+    from common.clients import get_ollama_fallback_client
+
+    return get_ollama_fallback_client(settings)
+
+
 def clean_and_truncate(content: str, settings: Settings) -> str:
     """Нормализация извлечённого текста: NUL/переносы/пробелы + усечение в test-режиме."""
     cleaned = content.replace("\x00", " ").replace("\r\n", "\n").replace("\r", "\n")
@@ -68,6 +75,10 @@ async def parse_task_rubric(
         parsed = await call_with_resilience(
             lambda model: _llm_parse(client, model, user_prompt, settings),
             settings.model_chain,
+            local_coro_factory=lambda model: _llm_parse(
+                _ollama_fallback_client(settings), model, user_prompt, settings
+            ),
+            local_model_chain=settings.ollama_fallback_chain if settings.llm_provider == "openrouter" else (),
         )
     except LLMError as exc:
         extracted_criteria = extract_criteria(full_text)

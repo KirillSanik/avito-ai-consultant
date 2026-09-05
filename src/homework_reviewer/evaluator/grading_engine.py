@@ -39,6 +39,14 @@ class GradingEngine:
     def __init__(self, client: instructor.Instructor, settings: Settings | None = None) -> None:
         self._client = client
         self.settings = settings or get_settings()
+        self._ollama_fallback_client: instructor.Instructor | None = None
+
+    def _get_ollama_fallback_client(self) -> instructor.Instructor:
+        if self._ollama_fallback_client is None:
+            from common.clients import get_ollama_fallback_client
+
+            self._ollama_fallback_client = get_ollama_fallback_client(self.settings)
+        return self._ollama_fallback_client
 
     async def evaluate_from_path(
         self, task_criteria: TaskCriteria, repo_path: Path, submission_id: str | None = None
@@ -98,6 +106,10 @@ class GradingEngine:
             result = await call_with_resilience(
                 lambda model: self._instructor_create(model, user_prompt),
                 settings.model_chain,
+                local_coro_factory=lambda model: self._instructor_create(
+                    model, user_prompt, client=self._get_ollama_fallback_client()
+                ),
+                local_model_chain=settings.ollama_fallback_chain,
             )
         except (LLMRequestError, LLMResilienceError) as exc:
             logger.error("Ошибка LLM-провайдера: %s", exc)
@@ -113,7 +125,9 @@ class GradingEngine:
             }
         )
 
-    async def _instructor_create(self, model: str, user_prompt: str) -> CriterionResult:
+    async def _instructor_create(
+        self, model: str, user_prompt: str, *, client: instructor.Instructor | None = None
+    ) -> CriterionResult:
         """Один запрос instructor (JSON-режим) к указанной модели; ошибки пробрасываются как есть."""
         settings = self.settings
         request_options: dict[str, object] = {
@@ -128,7 +142,8 @@ class GradingEngine:
         }
         if settings.chat_extra_body:
             request_options["extra_body"] = settings.chat_extra_body
-        return await self._client.chat.completions.create(model=model, **request_options)
+        active_client = client or self._client
+        return await active_client.chat.completions.create(model=model, **request_options)
 
     async def evaluate_submission(self, rubric: TaskRubric, submission_data: SubmissionData) -> EvaluationReport:
         """Оценка всех критериев параллельно (LLM-вызовы независимы); в storage отчёт не сохраняется.

@@ -80,8 +80,6 @@ class Pipeline:
         """Полная проверка: один парсинг + один клон → параллельные оценки → ответ."""
         task_file = Path(task_file)
         task_id = task_file.stem or "review"
-        total_started = time.perf_counter()
-
         # 1. Парсинг условия — ровно один раз (ТЗ §5.1, пункт 1).
         parse_started = time.perf_counter()
         logger.info("Парсинг условия задачи начат: файл=%s, task_id=%s", task_file.name, task_id)
@@ -95,29 +93,22 @@ class Pipeline:
             len(rubric.criteria),
         )
 
-        # 2. Клонирование — ровно один раз, без автоудаления (ТЗ §5.1, пункт 2).
+        return await self.run_preparsed(repo_url, task_criteria)
+
+    async def run_preparsed(self, repo_url: str, task_criteria: TaskCriteria) -> ReviewResponse:
+        """Review a repository URL using an already persisted/parsed rubric.
+
+        The database API uses this entrypoint to avoid a second LLM parsing of
+        a task that was already ingested.  The clone has the same lifecycle as
+        :meth:`run` and is deleted before this method returns.
+        """
+        total_started = time.perf_counter()
         clone_started = time.perf_counter()
         repo_path = await clone_repo(repo_url)
         logger.info("Клонирование завершено за %.3f с: %s", time.perf_counter() - clone_started, repo_path)
 
         try:
-            # 3. Параллельно — только финальные оценки по готовым входам (ТЗ §5.1, пункт 3).
-            gather_started = time.perf_counter()
-            detector_task = asyncio.create_task(self._detector.analyze_from_path(task_criteria, repo_path))
-            reviewer_task = asyncio.create_task(
-                self._reviewer.evaluate_from_path(task_criteria, repo_path, self._submission_id(repo_url))
-            )
-            try:
-                ai_assessment, evaluation = await asyncio.gather(detector_task, reviewer_task)
-            except BaseException:
-                # Сбой одной из задач: отменить вторую и дождаться, чтобы не
-                # оставалось задач, читающих удалённый temp-каталог (гонка).
-                logger.error("Одна из оценок не удалась, отмена параллельной задачи")
-                for task in (detector_task, reviewer_task):
-                    task.cancel()
-                await asyncio.gather(detector_task, reviewer_task, return_exceptions=True)
-                raise
-            logger.info("Оценки завершены за %.3f с", time.perf_counter() - gather_started)
+            return await self.run_from_path(repo_url, task_criteria, repo_path, total_started=total_started)
         finally:
             # 4. Очистка строго после завершения gather (ТЗ §5.1, пункт 4):
             # успех, исключение или отмена — temp-каталог гарантированно удалён.
@@ -125,10 +116,32 @@ class Pipeline:
             shutil.rmtree(repo_path.parent, ignore_errors=True)
             logger.info("Temp-каталог удалён за %.3f с", time.perf_counter() - cleanup_started)
 
-        # 5. Агрегация результатов (ТЗ §5.1, пункт 5).
+    async def run_from_path(
+        self, repo_url: str, task_criteria: TaskCriteria, repo_path: Path, *, total_started: float | None = None
+    ) -> ReviewResponse:
+        """Evaluate an existing local Git repository without parsing or cloning it.
+
+        Ownership of ``repo_path`` remains with the caller. This is used for
+        an uploaded solution temporarily materialised as a Git repository.
+        """
+        started = total_started or time.perf_counter()
+        gather_started = time.perf_counter()
+        detector_task = asyncio.create_task(self._detector.analyze_from_path(task_criteria, repo_path))
+        reviewer_task = asyncio.create_task(
+            self._reviewer.evaluate_from_path(task_criteria, repo_path, self._submission_id(repo_url))
+        )
+        try:
+            ai_assessment, evaluation = await asyncio.gather(detector_task, reviewer_task)
+        except BaseException:
+            logger.error("Одна из оценок не удалась, отмена параллельной задачи")
+            for task in (detector_task, reviewer_task):
+                task.cancel()
+            await asyncio.gather(detector_task, reviewer_task, return_exceptions=True)
+            raise
+        logger.info("Оценки завершены за %.3f с", time.perf_counter() - gather_started)
         logger.info(
             "Пайплайн завершён за %.3f с: вердикт=%s, итог=%.1f/%.1f",
-            time.perf_counter() - total_started,
+            time.perf_counter() - started,
             ai_assessment.status,
             evaluation.total_score,
             evaluation.max_total_score,

@@ -41,3 +41,18 @@ def get_openrouter_client(settings: Settings | None = None) -> instructor.Instru
         AsyncOpenAI(base_url=s.effective_api_base, api_key=s.effective_api_key),
         mode=instructor.Mode.JSON,
     )
+
+
+def get_ollama_fallback_client(settings: Settings | None = None) -> instructor.Instructor:
+    """Instructor client for the independent local Ollama quota fallback."""
+    s = settings or get_settings()
+    return instructor.from_openai(
+        AsyncOpenAI(base_url=s.ollama_fallback_base_url, api_key=s.ollama_fallback_api_key),
+        mode=instructor.Mode.JSON,
+    )
+
+
+def get_ollama_detector_fallback_client(settings: Settings | None = None) -> AsyncOpenAI:
+    """OpenAI-compatible local client used by the AI detector after quota exhaustion."""
+    s = settings or get_settings()
+    return AsyncOpenAI(base_url=s.ollama_fallback_base_url, api_key=s.ollama_fallback_api_key)

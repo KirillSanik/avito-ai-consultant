@@ -20,7 +20,7 @@ from reportlab.platypus import (
     TableStyle,
 )
 
-from common.models import EvaluationReport, TaskRubric
+from common.models import AIAssessmentResult, EvaluationReport, TaskRubric
 
 
 def _register_font() -> str:
@@ -142,6 +142,35 @@ def generate_evaluation_pdf(eval_json_path: str, output_pdf_path: str) -> str:
         str(output_path), pagesize=A4, rightMargin=15 * mm, leftMargin=15 * mm, topMargin=15 * mm, bottomMargin=15 * mm
     ).build(story)
     return str(output_path)
+
+
+def generate_review_pdf(
+    report: EvaluationReport, rubric: TaskRubric, output_pdf_path: str, ai_assessment: AIAssessmentResult | None = None
+) -> str:
+    """Generate a persistent API report from in-memory domain models.
+
+    The legacy generator accepts storage JSON paths.  The HTTP API deliberately
+    does not depend on that legacy layout, so it writes short-lived compatible
+    JSON inputs only for the duration of rendering.
+    """
+    import tempfile
+
+    output = Path(output_pdf_path)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="review-pdf-") as tmp:
+        root = Path(tmp)
+        evaluations = root / "evaluations"
+        tasks = root / "tasks"
+        evaluations.mkdir()
+        tasks.mkdir()
+        evaluation_path = evaluations / f"{report.submission_id}.json"
+        evaluation_path.write_text(report.model_dump_json(), encoding="utf-8")
+        (tasks / f"{report.task_id}.json").write_text(rubric.model_dump_json(), encoding="utf-8")
+        rendered = generate_evaluation_pdf(str(evaluation_path), str(output))
+    # Preserve the model verdict in the persisted PDF as metadata-adjacent JSON
+    # is intentionally avoided: ReviewResponse itself remains authoritative.
+    _ = ai_assessment
+    return rendered
 
 
 def _linkify(text: str) -> str:

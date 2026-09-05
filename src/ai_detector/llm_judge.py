@@ -15,6 +15,7 @@ import time
 
 from openai import APIStatusError, AsyncOpenAI
 
+from common.clients import get_ollama_detector_fallback_client
 from common.llm import (
     OPENROUTER_FREE_MODELS,
     LLMRequestError,
@@ -25,28 +26,44 @@ from common.llm import (
 )
 from common.models import AIAssessmentResult, CommitInfo
 from common.prompts import SYSTEM_PROMPT, USER_PROMPT_TEMPLATE, format_commit_history, format_file_tree
-from common.settings import get_settings
+from common.settings import Settings, get_settings
 
 from .utils.exceptions import LLMJudgementError
 
 logger = logging.getLogger(__name__)
+
+# Backward-compatible public default. Runtime configuration still takes
+# ``AI_DETECTOR_LLM_MODEL`` and Settings precedence in ``LLMJudge.__init__``.
+DEFAULT_LLM_MODEL = "google/gemma-4-31b-it:free"
 
 class LLMJudge:
     """Один Structured Output-запрос к локальной LLM; вердикт — объект ``AIAssessmentResult``."""
 
     MAX_ATTEMPTS = 3
 
-    def __init__(self, client: AsyncOpenAI, model: str | None = None) -> None:
+    def __init__(self, client: AsyncOpenAI, model: str | None = None, settings: Settings | None = None) -> None:
         self._client = client
         # Окружение читается при каждом обращении (сохранено поведение прежнего
         # common.config.llm_model; кешированные Settings не подходят).
-        self._model = model or os.getenv("AI_DETECTOR_LLM_MODEL") or get_settings().ai_detector_llm_model
-        provider = os.getenv("AI_DETECTOR_LLM_PROVIDER", "local")
+        self._settings = settings or get_settings()
+        self._model = model or os.getenv("AI_DETECTOR_LLM_MODEL") or (
+            self._settings.ai_detector_llm_model if settings is not None else DEFAULT_LLM_MODEL
+        )
+        provider = os.getenv("AI_DETECTOR_LLM_PROVIDER") or (
+            self._settings.ai_detector_llm_provider if settings is not None else "local"
+        )
+        self._uses_openrouter = provider == "openrouter"
         self._model_chain: tuple[str, ...] = (
             tuple(dict.fromkeys((self._model, *OPENROUTER_FREE_MODELS)))
-            if provider == "openrouter"
+            if self._uses_openrouter
             else (self._model,)
         )
+        self._ollama_fallback_client: AsyncOpenAI | None = None
+
+    def _get_ollama_fallback_client(self) -> AsyncOpenAI:
+        if self._ollama_fallback_client is None:
+            self._ollama_fallback_client = get_ollama_detector_fallback_client(self._settings)
+        return self._ollama_fallback_client
 
     async def evaluate(
         self, task_criteria: str, file_tree: list[str], commits: list[CommitInfo], full_code: str
@@ -72,6 +89,12 @@ class LLMJudge:
                 self._model_chain,
                 max_attempts=self.MAX_ATTEMPTS,
                 inter_request_delay=0.0,
+                local_coro_factory=(
+                    lambda model: self._parse_once(model, user_prompt, client=self._get_ollama_fallback_client())
+                )
+                if self._uses_openrouter
+                else None,
+                local_model_chain=self._settings.ollama_fallback_chain if self._uses_openrouter else (),
             )
         except LLMRequestError as exc:
             # Фатальный сбой без повторов (прочие статусы; переполнение контекста).
@@ -89,12 +112,15 @@ class LLMJudge:
         logger.info("LLM-запрос выполнен за %.3f с", time.perf_counter() - evaluate_started)
         return result
 
-    async def _parse_once(self, model: str, user_prompt: str) -> AIAssessmentResult:
+    async def _parse_once(
+        self, model: str, user_prompt: str, *, client: AsyncOpenAI | None = None
+    ) -> AIAssessmentResult:
         """Один запрос ``beta.chat.completions.parse`` с контрактом исключений."""
         attempt_started = time.perf_counter()
         logger.debug("LLM-запрос к модели «%s»…", model)
         try:
-            response = await self._client.beta.chat.completions.parse(
+            active_client = client or self._client
+            response = await active_client.beta.chat.completions.parse(
                 model=model,
                 messages=[
                     {"role": "system", "content": SYSTEM_PROMPT},
@@ -102,7 +128,7 @@ class LLMJudge:
                 ],
                 temperature=0,
                 response_format=AIAssessmentResult,
-                extra_body=get_settings().chat_extra_body,
+                extra_body=self._settings.chat_extra_body,
             )
         except APIStatusError as exc:
             # Переполнение контекста — фатальная ошибка с особым сообщением (без повторов):

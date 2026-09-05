@@ -35,9 +35,11 @@ T = TypeVar("T")
 
 #: Бесплатные модели OpenRouter — резервная цепочка ``Settings.model_chain``.
 OPENROUTER_FREE_MODELS: tuple[str, ...] = (
-    "qwen/qwen-2.5-72b-instruct:free",
-    "meta-llama/llama-3.3-70b-instruct:free",
-    "google/gemini-2.0-flash-exp:free",
+    "google/gemma-4-31b-it:free",
+    "nvidia/nemotron-3-super-120b-a12b:free",
+    "minimax/minimax-m3:free",
+    "poolside/laguna-s-2.1:free",
+    "z-ai/glm-5.2:free",
     "openrouter/free",
 )
 
@@ -46,6 +48,15 @@ _RETRYABLE_STATUS_CODES: frozenset[int] = frozenset({402, 429, 500, 502, 503, 50
 
 #: Маркеры сбоев в тексте ошибки (OpenRouter free-tier), по которым повтор допустим.
 _RETRYABLE_MESSAGE_MARKERS: tuple[str, ...] = ("in_flight_budget_exhausted", "rate limit", "429")
+
+# This is an account-wide free-tier quota, not a per-model transient limit;
+# switching among OpenRouter free models cannot resolve it.
+_OPENROUTER_DAILY_QUOTA_MARKERS: tuple[str, ...] = (
+    "openrouter_free_tier_daily",
+    "free tier daily",
+    "daily quota",
+    "daily limit",
+)
 
 
 class LLMError(Exception):
@@ -105,6 +116,17 @@ def is_model_unavailable(error: BaseException) -> bool:
     return "error code: 404" in message or '"code": 404' in message
 
 
+def is_openrouter_daily_quota_exhausted(error: BaseException) -> bool:
+    """True for a 429 that exhausts the whole OpenRouter free account quota."""
+    current: BaseException | None = error
+    has_429 = False
+    while current is not None:
+        has_429 = has_429 or getattr(current, "status_code", None) == 429
+        current = current.__cause__ or current.__context__
+    message = str(error).lower()
+    return has_429 and any(marker in message for marker in _OPENROUTER_DAILY_QUOTA_MARKERS)
+
+
 def _attempt_delay(attempt: int) -> float:
     """Экспоненциальная задержка перед попыткой ``attempt`` (1, 2, 3, …): 2^n, потолок 10 с."""
     return min(2**attempt, 10)
@@ -117,6 +139,8 @@ async def call_with_resilience(
     max_attempts: int = 3,
     inter_request_delay: float = 2.0,
     sleep: Callable[[float], Awaitable[None]] | None = None,
+    local_coro_factory: Callable[[str], Awaitable[T]] | None = None,
+    local_model_chain: Sequence[str] = (),
 ) -> T:
     """Выполняет LLM-запрос с ретраями и fallback по цепочке моделей.
 
@@ -134,6 +158,19 @@ async def call_with_resilience(
     """
     if sleep is None:
         sleep = asyncio.sleep
+
+    async def _use_local_fallback(error: BaseException) -> T | None:
+        if not is_openrouter_daily_quota_exhausted(error) or local_coro_factory is None or not local_model_chain:
+            return None
+        logger.warning("OpenRouter free-tier daily quota exhausted; switching directly to local Ollama fallback")
+        return await call_with_resilience(
+            local_coro_factory,
+            local_model_chain,
+            max_attempts=max_attempts,
+            inter_request_delay=0.0,
+            sleep=sleep,
+        )
+
     last_error: BaseException | None = None
     request_sent = False
     for model_name in model_chain:
@@ -149,11 +186,17 @@ async def call_with_resilience(
             except LLMRequestError:
                 raise
             except LLMTransientError as exc:
+                local_result = await _use_local_fallback(exc)
+                if local_result is not None:
+                    return local_result
                 last_error = exc
                 logger.warning(
                     "Временный сбой LLM (модель %s, попытка %d/%d): %s", model_name, attempt + 1, max_attempts, exc
                 )
             except Exception as exc:
+                local_result = await _use_local_fallback(exc)
+                if local_result is not None:
+                    return local_result
                 if is_model_unavailable(exc):
                     last_error = exc
                     logger.error("Модель «%s» недоступна (404), переход к следующей модели цепочки", model_name)
