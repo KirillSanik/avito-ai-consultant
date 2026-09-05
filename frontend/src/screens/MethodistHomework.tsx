@@ -6,6 +6,7 @@ import { useState } from "react";
 import { ErrorState, ExternalLink, Modal, ProgressBar, ResourceLinks } from "@/components/ui";
 import { XlsxImportCard } from "@/components/xlsx";
 import { courseApi, homeworkApi } from "@/lib/api";
+import { activityLogger } from "@/lib/logger";
 import type { Assignment, Submission } from "@/lib/types";
 
 
@@ -22,6 +23,7 @@ export function MethodistHomework({
   const [selectedReviewerId, setSelectedReviewerId] = useState("");
   const [showAddReviewer, setShowAddReviewer] = useState(false);
   const [openedSubmission, setOpenedSubmission] = useState<Submission | null>(null);
+  const [taskFile, setTaskFile] = useState<File | null>(null);
 
   const reviewers = useQuery({
     queryKey: ["reviewers", assignment.id],
@@ -37,6 +39,21 @@ export function MethodistHomework({
   const saveCriteria = useMutation({
     mutationFn: () => homeworkApi.updateCriteria(assignment.id, criteria, guide),
     onSuccess: () => onRefresh(),
+  });
+  const uploadTask = useMutation({
+    mutationFn: () => homeworkApi.uploadTaskFile(assignment.id, taskFile!),
+    onError: (error) => {
+      activityLogger.error("methodist.task_file_upload_failed", {
+        assignmentId: assignment.id,
+        filename: taskFile?.name,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    },
+    onSuccess: async () => {
+      activityLogger.info("methodist.task_file_uploaded", { assignmentId: assignment.id, filename: taskFile?.name });
+      setTaskFile(null);
+      await onRefresh();
+    },
   });
   const addReviewer = useMutation({
     mutationFn: (userId: number) => homeworkApi.addReviewer(assignment.id, userId),
@@ -97,6 +114,34 @@ export function MethodistHomework({
           >
             Скачать XLSX
           </button>
+        </div>
+        <div className="mt-4 border-t border-border pt-4">
+          <p className="field-label">Файл условия для AI-разбора</p>
+          <div className="flex flex-wrap items-center gap-3">
+            <input
+              type="file"
+              accept=".pdf,.docx,.xlsx,.md"
+              onChange={(event) => setTaskFile(event.target.files?.[0] ?? null)}
+            />
+            <button
+              type="button"
+              className="button-secondary"
+              disabled={!taskFile || uploadTask.isPending}
+              onClick={() => {
+                activityLogger.info("methodist.task_file_upload_clicked", {
+                  assignmentId: assignment.id,
+                  filename: taskFile?.name,
+                });
+                uploadTask.mutate();
+              }}
+            >
+              {uploadTask.isPending ? "Разбираем…" : "Загрузить и разобрать"}
+            </button>
+          </div>
+          {uploadTask.error && <p className="mt-2 text-xs text-danger">{uploadTask.error.message}</p>}
+          {assignment.rubric_status && assignment.rubric_status !== "not_requested" && (
+            <p className="mt-2 text-xs text-muted">Статус рубрики: {assignment.rubric_status}</p>
+          )}
         </div>
       </section>
 

@@ -14,6 +14,7 @@ import type {
   User,
   XlsxImportResult,
 } from "./types";
+import { activityLogger } from "./logger";
 
 
 export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
@@ -52,6 +53,9 @@ export function loadSession(): AuthResponse | null {
 }
 
 export async function api<T>(path: string, init?: RequestInit): Promise<T> {
+  const method = init?.method ?? "GET";
+  const started = Date.now();
+  activityLogger.info("api.request", { method, path });
   const response = await fetch(`${API_URL}${path}`, {
     ...init,
     headers: {
@@ -62,12 +66,14 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
   });
 
   if (!response.ok) {
+    activityLogger.error("api.response.error", { method, path, status: response.status, durationMs: Date.now() - started });
     const body = await response.json().catch(() => ({ detail: "Ошибка API" }));
     const detail = Array.isArray(body.detail)
       ? body.detail.map((item: { msg?: string }) => item.msg).filter(Boolean).join(", ")
       : body.detail;
     throw new Error(detail || "Не удалось выполнить запрос");
   }
+  activityLogger.info("api.response.ok", { method, path, status: response.status, durationMs: Date.now() - started });
   if (response.status === 204) return undefined as T;
   return response.json();
 }
@@ -81,6 +87,7 @@ async function requestError(response: Response): Promise<Error> {
 }
 
 export async function downloadBlob(path: string, filename: string) {
+  activityLogger.info("download.start", { path, filename });
   const response = await fetch(`${API_URL}${path}`, {
     headers: {
       ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
@@ -96,6 +103,7 @@ export async function downloadBlob(path: string, filename: string) {
   link.click();
   link.remove();
   URL.revokeObjectURL(url);
+  activityLogger.info("download.complete", { path, filename });
 }
 
 export async function uploadXlsx(
@@ -203,6 +211,18 @@ export const homeworkApi = {
   next: (id: number) => api<Submission>(`/api/assignments/${id}/next`),
   createDraft: (submissionId: number) =>
     api<Submission>(`/api/submissions/${submissionId}/ai-draft`, { method: "POST" }),
+  uploadTaskFile: (assignmentId: number, file: File) => {
+    const form = new FormData();
+    form.append("file", file);
+    return fetch(`${API_URL}/api/assignments/${assignmentId}/task-file`, {
+      method: "POST",
+      headers: authToken ? { Authorization: `Bearer ${authToken}` } : {},
+      body: form,
+    }).then(async (response) => {
+      if (!response.ok) throw await requestError(response);
+      return response.json();
+    });
+  },
   saveReview: (
     submissionId: number,
     payload: {

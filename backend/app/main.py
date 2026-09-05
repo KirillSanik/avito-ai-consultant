@@ -3,6 +3,7 @@ import asyncio
 from datetime import datetime, timezone
 import hashlib
 import hmac
+import logging
 import os
 from pathlib import Path
 import secrets
@@ -76,6 +77,8 @@ from .xlsx_io import (
     export_course_workbook,
     parse_logins,
 )
+
+logger = logging.getLogger(__name__)
 
 
 PASSWORD_ITERATIONS = 210_000
@@ -848,6 +851,8 @@ def submit_student_work(
         work_url=payload.work_url,
         stepik_url="",
         status="pending",
+        source_type="github" if "github.com" in payload.work_url.lower() else "url",
+        evaluation_status="not_requested",
     )
     db.add(submission)
     db.flush()
@@ -1152,6 +1157,7 @@ def upload_assignment_task_file(
     db: Session = Depends(get_db),
     _: User = Depends(require_methodist),
 ) -> AssignmentOut:
+    logger.info("task.upload.started assignment_id=%s filename=%s", assignment_id, file.filename)
     assignment = get_assignment_or_404(assignment_id, db)
     suffix = Path(file.filename or "").suffix.lower()
     if suffix not in SUPPORTED_TASK_EXTENSIONS:
@@ -1194,6 +1200,7 @@ def upload_assignment_task_file(
             submission.evaluation_status = "stale"
     db.commit()
     db.refresh(assignment)
+    logger.info("task.rubric.persisted assignment_id=%s status=%s criteria_version=%s", assignment.id, assignment.rubric_status, assignment.criteria_version)
     return AssignmentOut(
         id=assignment.id,
         course_id=assignment.course_id,
@@ -1533,6 +1540,7 @@ def create_ai_draft(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> Submission:
+    logger.info("evaluation.enqueue.requested submission_id=%s user_id=%s", submission_id, current_user.id)
     submission = db.get(Submission, submission_id)
     if submission is None:
         raise HTTPException(status_code=404, detail="Submission not found")
@@ -1554,7 +1562,13 @@ def create_ai_draft(
     submission.reviewer_user_id = submission.reviewer_user_id or current_user.id
     db.commit()
     db.refresh(submission)
-    evaluate_submission_task.delay(submission.id)
+    try:
+        evaluate_submission_task.apply_async(args=[submission.id], ignore_result=True)
+        logger.info("evaluation.enqueue.accepted submission_id=%s", submission.id)
+    except Exception:
+        submission.evaluation_status = "failed"
+        db.commit()
+        logger.exception("evaluation.enqueue.failed submission_id=%s", submission.id)
     return submission_out_with_evaluation(submission, db)
 
 

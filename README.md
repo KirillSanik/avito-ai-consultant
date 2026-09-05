@@ -119,3 +119,40 @@ celery -A app.tasks.celery_app worker --loglevel=info
 AI-черновик выполняется асинхронно в Celery. Ручное ревью остаётся источником
 окончательного решения и не изменяет существующие права доступа или очередь
 ревьюеров.
+
+## Логи действий и диагностика
+
+Frontend записывает события нажатий, загрузок, запросов API и скачивания отчётов
+в консоль браузера с префиксом `[ReviewDesk]`. Откройте DevTools (F12) →
+**Console**, включите сохранение сообщений и отфильтруйте по `ReviewDesk`.
+
+Последние 200 событий также сохраняются в Local Storage текущего frontend-origin
+под ключом `reviewdesk.activity.log`. Их можно посмотреть в DevTools →
+**Application/Storage → Local Storage** или выполнить в Console:
+
+```js
+JSON.parse(localStorage.getItem("reviewdesk.activity.log") || "[]")
+```
+
+Для очистки истории используйте:
+
+```js
+localStorage.removeItem("reviewdesk.activity.log")
+```
+
+Backend и Celery пишут переходы загрузки задания и AI-оценки в стандартный
+Python-лог. При Docker-запуске смотрите их так:
+
+```bash
+docker compose logs -f backend worker
+```
+
+Для последних сообщений без режима follow:
+
+```bash
+docker compose logs --tail=200 backend worker
+```
+
+В локальном запуске эти сообщения появляются в терминалах `uvicorn` и Celery;
+события имеют имена вроде `evaluation.enqueue.accepted` и
+`evaluation.task.completed`.

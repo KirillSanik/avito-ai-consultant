@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import os
 from datetime import datetime, timezone
 from pathlib import Path
@@ -10,6 +11,8 @@ from .models import Evaluation, Submission
 from .services.contracts import TaskRubric
 from .services.pipeline import EvaluationPipeline
 from .services.reporting import generate_review_pdf
+
+logger = logging.getLogger(__name__)
 
 
 celery_app = Celery(
@@ -57,6 +60,7 @@ def deadline_reminder(course: str, assignment: str, deadline: str) -> dict[str, 
 
 @celery_app.task(name="evaluations.evaluate_submission")
 def evaluate_submission_task(submission_id: int) -> dict[str, object]:
+    logger.info("evaluation.task.started submission_id=%s", submission_id)
     with SessionLocal() as db:
         submission = db.get(Submission, submission_id)
         if submission is None:
@@ -73,6 +77,7 @@ def evaluate_submission_task(submission_id: int) -> dict[str, object]:
         )
         db.add(evaluation)
         submission.evaluation_status = "processing"
+        logger.info("evaluation.status.processing submission_id=%s evaluation_id=%s", submission.id, evaluation.id)
         db.commit()
         db.refresh(evaluation)
         try:
@@ -107,6 +112,7 @@ def evaluate_submission_task(submission_id: int) -> dict[str, object]:
             evaluation.completed_at = datetime.now(timezone.utc)
             submission.latest_evaluation_id = evaluation.id
             submission.evaluation_status = "completed"
+            logger.info("evaluation.status.completed submission_id=%s evaluation_id=%s score=%s/%s", submission.id, evaluation.id, evaluation.total_score, evaluation.max_total_score)
             submission.ai_draft = {
                 "scores": [
                     {
@@ -129,5 +135,6 @@ def evaluate_submission_task(submission_id: int) -> dict[str, object]:
             evaluation.error_message = str(exc)[:4000]
             evaluation.completed_at = datetime.now(timezone.utc)
             submission.evaluation_status = "failed"
+            logger.exception("evaluation.status.failed submission_id=%s evaluation_id=%s", submission.id, evaluation.id)
             db.commit()
             return {"status": "failed", "submission_id": submission_id, "evaluation_id": evaluation.id}

@@ -98,6 +98,23 @@ export type DraftScore = {
   score: number;
   max_score: number;
   comment: string;
+  evidence?: string[];
+};
+
+export type EvaluationReport = {
+  task_id: string;
+  submission_id: string;
+  total_score: number;
+  max_total_score: number;
+  criterion_results: Array<{
+    criterion_id: string;
+    criterion_name: string;
+    assigned_score: number;
+    max_points: number;
+    reasoning: string;
+    evidence: string[];
+  }>;
+  summary_feedback: string;
 };
 
 export type CriterionScore = {
@@ -126,6 +143,19 @@ export type Submission = {
     summary: string;
     integrity: { confidence: number; reason: string };
   } | null;
+  source_type?: string;
+  source_file_path?: string | null;
+  evaluation_status?: "not_requested" | "queued" | "processing" | "completed" | "failed" | "stale";
+  latest_evaluation_id?: number | null;
+  review_json?: EvaluationReport | null;
+  ai_assessment_json?: {
+    status: string;
+    confidence: number;
+    reasoning: string;
+    ai_indicators: string[];
+    human_indicators: string[];
+  } | null;
+  pdf_report_path?: string | null;
 };
 
 export type Assignment = {
@@ -139,6 +169,9 @@ export type Assignment = {
   criteria: Criterion[];
   reviewer_guide: string;
   submissions: Submission[];
+  rubric_status?: string;
+  rubric_json?: Record<string, unknown> | null;
+  task_text?: string | null;
 };
 
 export type Reviewer = {

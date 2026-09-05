@@ -1,9 +1,10 @@
 "use client";
 
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { FormEvent, useState } from "react";
 
 import { homeworkApi } from "@/lib/api";
+import { activityLogger } from "@/lib/logger";
 import type { Assignment, Criterion, HomeworkListItem, Submission } from "@/lib/types";
 import { Modal, ProgressBar, ResourceLinks } from "@/components/ui";
 
@@ -20,6 +21,16 @@ export function ReviewerHomework({
   const [clarification, setClarification] = useState("");
   const [showClarification, setShowClarification] = useState(false);
   const [current, setCurrent] = useState<Submission | null>(null);
+  const evaluation = useQuery({
+    queryKey: ["submission-evaluation", current?.id],
+    queryFn: () => homeworkApi.getSubmission(current!.id),
+    enabled: current !== null,
+    refetchInterval: (query) => {
+      const status = query.state.data?.evaluation_status;
+      return status === "queued" || status === "processing" ? 2000 : false;
+    },
+  });
+  const activeSubmission = evaluation.data ?? current;
 
   const checked = assignment.submissions.filter(
     (item) => item.status === "reviewed",
@@ -37,6 +48,7 @@ export function ReviewerHomework({
   const getNext = useMutation({
     mutationFn: async () => {
       const submission = await homeworkApi.next(assignment.id);
+      activityLogger.info("reviewer.next_submission", { assignmentId: assignment.id, submissionId: submission.id });
       return homeworkApi.createDraft(submission.id);
     },
     onSuccess: (submission) => {
@@ -176,20 +188,27 @@ export function ReviewerHomework({
               Осталось {Math.max(0, assignedTotal - assignedChecked)} из назначенных вам работ
             </p>
           </div>
-          <button className="button-primary" disabled={getNext.isPending} onClick={() => getNext.mutate()}>
+          <button
+            className="button-primary"
+            disabled={getNext.isPending}
+            onClick={() => {
+              activityLogger.info("reviewer.next_clicked", { assignmentId: assignment.id });
+              getNext.mutate();
+            }}
+          >
             {getNext.isPending ? "AI анализирует работу…" : "Получить следующего →"}
           </button>
           {getNext.error && <p className="w-full text-xs text-danger">{getNext.error.message}</p>}
         </section>
       )}
-      {current && (
+      {activeSubmission && (
         <Modal
-          title={`Проверка: ${current.student_name}`}
+          title={`Проверка: ${activeSubmission.student_name}`}
           onClose={() => setCurrent(null)}
         >
           <ReviewEditor
-            key={`${current.id}-${current.ai_draft?.total ?? "edit"}`}
-            submission={current}
+            key={`${activeSubmission.id}-${activeSubmission.evaluation_status}-${activeSubmission.latest_evaluation_id ?? "edit"}`}
+            submission={activeSubmission}
             criteria={assignment.criteria}
             onCancel={() => setCurrent(null)}
             onSaved={async () => {
@@ -215,7 +234,10 @@ function ReviewEditor({
   onCancel: () => void;
   onSaved: () => Promise<void>;
 }) {
-  const [summary, setSummary] = useState(submission.summary ?? submission.ai_draft?.summary ?? "");
+  const structuredScores = submission.review_json?.criterion_results ?? [];
+  const [summary, setSummary] = useState(
+    submission.summary ?? submission.ai_draft?.summary ?? submission.review_json?.summary_feedback ?? "",
+  );
   const [integrity, setIntegrity] = useState(submission.integrity_flag ?? "");
   const [scores, setScores] = useState(() =>
     criteria.map((criterion, index) => {
@@ -225,10 +247,13 @@ function ReviewEditor({
       const draft = submission.ai_draft?.scores.find(
         (item) => item.criterion === criterion.title,
       );
+      const structured = structuredScores.find(
+        (item) => item.criterion_name === criterion.title,
+      );
       return {
         criterion_index: index,
-        score: saved?.score ?? draft?.score ?? 0,
-        comment: saved?.comment ?? draft?.comment ?? "",
+        score: saved?.score ?? draft?.score ?? structured?.assigned_score ?? 0,
+        comment: saved?.comment ?? draft?.comment ?? structured?.reasoning ?? "",
       };
     }),
   );
@@ -240,7 +265,10 @@ function ReviewEditor({
         summary,
         integrity_flag: integrity.trim() || null,
       }),
-    onSuccess: onSaved,
+    onSuccess: async () => {
+      activityLogger.info("reviewer.review_saved", { submissionId: submission.id });
+      await onSaved();
+    },
   });
 
   function submit(event: FormEvent) {
@@ -263,11 +291,17 @@ function ReviewEditor({
         <div className="rounded-lg border border-border bg-secondary p-4">
           <p className="eyebrow">Текстовый отчёт</p>
           <p className="text-sm leading-6 text-slate-700">
-            {submission.ai_draft?.summary ?? submission.summary ?? "Сохранённая проверка доступна для редактирования."}
+            {submission.ai_draft?.summary ?? submission.review_json?.summary_feedback ?? submission.summary ?? "Сохранённая проверка доступна для редактирования."}
           </p>
-          {submission.ai_draft?.scores && (
+          {submission.ai_draft?.scores || structuredScores.length > 0 ? (
             <div className="mt-4 grid gap-2">
-              {submission.ai_draft.scores.map((item) => (
+              {(submission.ai_draft?.scores ?? structuredScores.map((item) => ({
+                criterion: item.criterion_name,
+                score: item.assigned_score,
+                max_score: item.max_points,
+                comment: item.reasoning,
+                evidence: item.evidence,
+              }))).map((item) => (
                 <div key={item.criterion} className="flex gap-3 rounded-lg bg-white p-3 text-xs">
                   <span className="min-w-0 flex-1">
                     <strong>{item.criterion}</strong>
@@ -277,17 +311,23 @@ function ReviewEditor({
                 </div>
               ))}
             </div>
-          )}
+          ) : null}
         </div>
 
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-          <Metric label="Оценка AI" value={`${submission.ai_draft?.total ?? "—"}/100`} />
-          <Metric label="Критериев" value={String(submission.ai_draft?.scores.length ?? "—")} />
+          <Metric label="Оценка AI" value={`${submission.ai_draft?.total ?? submission.review_json?.total_score ?? "—"}/100`} />
+          <Metric label="Критериев" value={String(submission.ai_draft?.scores.length ?? structuredScores.length ?? "—")} />
           <Metric
             label="AI-сигнал"
-            value={submission.ai_draft ? `${Math.round(submission.ai_draft.integrity.confidence * 100)}%` : "—"}
+            value={submission.ai_assessment_json ? `${Math.round(submission.ai_assessment_json.confidence * 100)}%` : submission.ai_draft ? `${Math.round(submission.ai_draft.integrity.confidence * 100)}%` : "—"}
           />
         </div>
+
+        {submission.evaluation_status && submission.evaluation_status !== "completed" && (
+          <div className={`rounded-lg border p-3 text-sm ${submission.evaluation_status === "failed" ? "border-red-200 bg-red-50 text-danger" : "border-amber-200 bg-amber-50 text-warning"}`}>
+            {submission.evaluation_status === "failed" ? "AI-проверка завершилась ошибкой." : "AI-проверка выполняется. Результаты появятся автоматически."}
+          </div>
+        )}
 
         <label className="block">
           <span className="field-label">Краткий итог проверки</span>
@@ -361,12 +401,15 @@ function ReviewEditor({
 
         {save.error && <p className="text-xs text-danger">{save.error.message}</p>}
         <div className="flex flex-wrap gap-3 border-t border-border pt-4">
-          <button className="button-success" disabled={save.isPending}>Закончить проверку</button>
-          {submission.status === "reviewed" && (
+          <button className="button-success" disabled={save.isPending || submission.evaluation_status === "queued" || submission.evaluation_status === "processing"}>Закончить проверку</button>
+          {(submission.status === "reviewed" || submission.evaluation_status === "completed") && (
             <button
               type="button"
               className="button-secondary"
-              onClick={() => void homeworkApi.downloadReport(submission.id)}
+              onClick={() => {
+                activityLogger.info("reviewer.download_report_clicked", { submissionId: submission.id });
+                void homeworkApi.downloadReport(submission.id);
+              }}
             >
               Скачать PDF
             </button>

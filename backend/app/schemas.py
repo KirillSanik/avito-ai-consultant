@@ -168,6 +168,11 @@ class AssignmentOut(BaseModel):
     criteria: list[Criterion]
     reviewer_guide: str
     submissions: list[SubmissionOut]
+    task_file_path: str | None = None
+    rubric_json: dict | None = None
+    task_text: str | None = None
+    rubric_status: str = "not_requested"
+    criteria_version: int = 1
 
 
 class CriterionScoreInput(BaseModel):
