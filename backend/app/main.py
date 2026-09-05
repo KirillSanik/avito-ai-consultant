@@ -1,20 +1,19 @@
 from contextlib import asynccontextmanager
+import asyncio
 from datetime import datetime, timezone
 import hashlib
 import hmac
-from html import escape
-from io import BytesIO
 import os
+from pathlib import Path
 import secrets
 from typing import Literal
 
 from fastapi import Depends, FastAPI, File, Header, HTTPException, Query, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import Response
+from fastapi.responses import FileResponse, Response
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
-from weasyprint import HTML
 
 from .allocation import (
     assign_new_submission,
@@ -31,6 +30,7 @@ from .models import (
     Course,
     CourseReviewer,
     EnrollmentApplication,
+    Evaluation,
     Submission,
     User,
 )
@@ -66,7 +66,10 @@ from .schemas import (
     UserOut,
     XlsxImportResult,
 )
-from .tasks import deadline_reminder
+from .services.llm import LLMService
+from .services.parsers import SUPPORTED_TASK_EXTENSIONS, extract_task_text, fallback_rubric
+from .services.settings import PipelineSettings
+from .tasks import deadline_reminder, evaluate_submission_task
 from .xlsx_io import (
     XLSX_MEDIA_TYPE,
     export_assignment_workbook,
@@ -1142,6 +1145,69 @@ def create_assignment(
     )
 
 
+@app.post("/api/assignments/{assignment_id}/task-file", response_model=AssignmentOut)
+def upload_assignment_task_file(
+    assignment_id: int,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    _: User = Depends(require_methodist),
+) -> AssignmentOut:
+    assignment = get_assignment_or_404(assignment_id, db)
+    suffix = Path(file.filename or "").suffix.lower()
+    if suffix not in SUPPORTED_TASK_EXTENSIONS:
+        raise HTTPException(status_code=422, detail="Поддерживаются PDF, DOCX, XLSX и Markdown")
+    storage = Path(os.getenv("STORAGE_DIR", "./storage")) / "tasks"
+    storage.mkdir(parents=True, exist_ok=True)
+    destination = storage / f"assignment-{assignment.id}{suffix}"
+    content = file.file.read()
+    if not content:
+        raise HTTPException(status_code=422, detail="Файл задания пуст")
+    destination.write_bytes(content)
+    try:
+        task_text = extract_task_text(destination)
+        fallback = fallback_rubric(str(assignment.id), assignment.title, task_text, assignment.criteria)
+        try:
+            rubric = asyncio.run(
+                LLMService(PipelineSettings.from_environment()).parse_rubric(
+                    str(assignment.id), assignment.title, task_text, fallback
+                )
+            )
+            assignment.rubric_status = "completed"
+        except Exception:
+            rubric = fallback
+            assignment.rubric_status = "fallback"
+    except Exception as exc:
+        destination.unlink(missing_ok=True)
+        assignment.rubric_status = "failed"
+        db.commit()
+        raise HTTPException(status_code=422, detail=f"Не удалось разобрать задание: {exc}") from exc
+    assignment.task_file_path = str(destination)
+    assignment.task_text = task_text
+    assignment.rubric_json = rubric.model_dump(mode="json")
+    assignment.criteria = [
+        {"title": item.name, "description": item.description, "max_score": item.max_points}
+        for item in rubric.criteria
+    ]
+    assignment.criteria_version += 1
+    for submission in assignment.submissions:
+        if submission.evaluation_status == "completed":
+            submission.evaluation_status = "stale"
+    db.commit()
+    db.refresh(assignment)
+    return AssignmentOut(
+        id=assignment.id,
+        course_id=assignment.course_id,
+        title=assignment.title,
+        number=assignment.number,
+        deadline=assignment.deadline,
+        task_url=assignment.task_url,
+        criteria_url=assignment.criteria_url,
+        criteria=assignment.criteria,
+        reviewer_guide=assignment.reviewer_guide,
+        submissions=[SubmissionOut.model_validate(item) for item in assignment.submissions],
+    )
+
+
 @app.get("/api/courses/{course_id}/assignments", response_model=list[AssignmentListOut])
 def list_assignments(
     course_id: int,
@@ -1256,6 +1322,10 @@ def update_criteria(
     assignment = get_assignment_or_404(assignment_id, db)
     assignment.criteria = [item.model_dump() for item in payload.criteria]
     assignment.reviewer_guide = payload.reviewer_guide
+    assignment.criteria_version += 1
+    for submission in assignment.submissions:
+        if submission.evaluation_status == "completed":
+            submission.evaluation_status = "stale"
     db.commit()
     return AssignmentOut(
         id=assignment.id,
@@ -1423,7 +1493,7 @@ def get_submission_detail(
     submission_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
-) -> Submission:
+) -> SubmissionOut:
     submission = db.get(Submission, submission_id)
     if submission is None:
         raise HTTPException(status_code=404, detail="Submission not found")
@@ -1436,7 +1506,25 @@ def get_submission_detail(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Submission is assigned to another reviewer",
         )
-    return submission
+    return submission_out_with_evaluation(submission, db)
+
+
+def submission_out_with_evaluation(submission: Submission, db: Session) -> SubmissionOut:
+    output = SubmissionOut.model_validate(submission)
+    evaluation_id = submission.latest_evaluation_id
+    evaluation = db.get(Evaluation, evaluation_id) if evaluation_id else None
+    if evaluation is None:
+        evaluation = db.scalar(
+            select(Evaluation)
+            .where(Evaluation.submission_id == submission.id)
+            .order_by(Evaluation.id.desc())
+        )
+    if evaluation is not None:
+        output.latest_evaluation_id = evaluation.id
+        output.review_json = evaluation.review_json
+        output.ai_assessment_json = evaluation.ai_assessment_json
+        output.pdf_report_path = evaluation.pdf_report_path
+    return output
 
 
 @app.post("/api/submissions/{submission_id}/ai-draft", response_model=SubmissionOut)
@@ -1455,30 +1543,19 @@ def create_ai_draft(
     ):
         raise HTTPException(status_code=403, detail="Submission is assigned to another reviewer")
 
-    criteria = submission.assignment.criteria
-    draft_scores = [
-        {
-            "criterion": item["title"],
-            "score": max(1, round(item["max_score"] * 0.8)),
-            "max_score": item["max_score"],
-            "comment": "Критерий в основном выполнен; проверьте выводы вручную.",
-        }
-        for item in criteria
-    ]
-    submission.ai_draft = {
-        "scores": draft_scores,
-        "total": sum(item["score"] for item in draft_scores),
-        "summary": "Работа структурирована, расчёты выглядят последовательно. Нужна ручная проверка источников.",
-        "integrity": {
-            "confidence": 0.27,
-            "reason": "Недостаточно признаков для вывода об использовании генеративного AI.",
-        },
-    }
+    if submission.evaluation_status in {"queued", "processing"}:
+        return submission_out_with_evaluation(submission, db)
+    if not submission.work_url and not submission.source_file_path:
+        raise HTTPException(status_code=422, detail="У работы отсутствует источник для AI-проверки")
+    submission.source_type = "file" if submission.source_file_path else "github"
+    submission.evaluation_status = "queued"
     submission.status = "in_review"
     submission.reviewer = submission.reviewer or reviewer_name(current_user)
+    submission.reviewer_user_id = submission.reviewer_user_id or current_user.id
     db.commit()
     db.refresh(submission)
-    return submission
+    evaluate_submission_task.delay(submission.id)
+    return submission_out_with_evaluation(submission, db)
 
 
 @app.put("/api/submissions/{submission_id}/review", response_model=SubmissionOut)
@@ -1935,7 +2012,9 @@ def download_report(
     current_user: User = Depends(get_current_user),
 ) -> Response:
     submission = db.get(Submission, submission_id)
-    if submission is None or submission.status != "reviewed":
+    if submission is None:
+        raise HTTPException(status_code=404, detail="Submission not found")
+    if submission.evaluation_status != "completed":
         raise HTTPException(status_code=404, detail="Completed review not found")
     get_assignment_for_user(submission.assignment_id, current_user, db)
     if (
@@ -1944,39 +2023,20 @@ def download_report(
     ):
         raise HTTPException(status_code=403, detail="Submission is assigned to another reviewer")
 
-    student_name = escape(submission.student_name)
-    summary = escape(submission.summary or "")
-    integrity = escape(submission.integrity_flag or "Нарушения не отмечены")
-    criterion_rows = "".join(
-        "<tr>"
-        f"<td>{escape(str(item.get('criterion', 'Критерий')))}</td>"
-        f"<td>{item.get('score', 0)} / {item.get('max_score', 0)}</td>"
-        f"<td>{escape(str(item.get('comment', '')))}</td>"
-        "</tr>"
-        for item in (submission.criterion_scores or [])
-    )
-    html = f"""
-    <html lang="ru"><meta charset="utf-8">
-    <style>
-      body {{ font-family: sans-serif; margin: 48px; }}
-      h1 {{ color: #222; }}
-      table {{ width: 100%; border-collapse: collapse; }}
-      th, td {{ border: 1px solid #ddd; padding: 8px; text-align: left; }}
-    </style>
-    <body>
-      <h1>Отчёт по проверке</h1>
-      <p><b>Студент:</b> {student_name}</p>
-      <p><b>Итог:</b> {submission.score}/100</p>
-      <h2>Оценки по критериям</h2>
-      <table><tr><th>Критерий</th><th>Балл</th><th>Комментарий</th></tr>{criterion_rows}</table>
-      <h2>Комментарий</h2><p>{summary}</p>
-      <h2>Самостоятельность</h2><p>{integrity}</p>
-    </body></html>
-    """
-    output = BytesIO()
-    HTML(string=html).write_pdf(output)
-    return Response(
-        output.getvalue(),
+    evaluation = db.get(Evaluation, submission.latest_evaluation_id) if submission.latest_evaluation_id else None
+    if evaluation is None:
+        evaluation = db.scalar(
+            select(Evaluation)
+            .where(Evaluation.submission_id == submission.id, Evaluation.status == "completed")
+            .order_by(Evaluation.id.desc())
+        )
+    if evaluation is None or not evaluation.pdf_report_path:
+        raise HTTPException(status_code=404, detail="PDF report not found")
+    report_path = Path(evaluation.pdf_report_path)
+    if not report_path.is_file():
+        raise HTTPException(status_code=404, detail="PDF report not found")
+    return FileResponse(
+        report_path,
         media_type="application/pdf",
-        headers={"Content-Disposition": f'attachment; filename="review-{submission_id}.pdf"'},
+        filename=f"review-{submission_id}.pdf",
     )

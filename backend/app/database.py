@@ -25,6 +25,11 @@ REQUIRED_COLUMNS: dict[str, tuple[tuple[str, str], ...]] = {
     "assignments": (
         ("number", "INTEGER DEFAULT 1"),
         ("criteria_url", "VARCHAR(500) DEFAULT ''"),
+        ("task_file_path", "VARCHAR(1024)"),
+        ("rubric_json", "JSON"),
+        ("task_text", "TEXT"),
+        ("rubric_status", "VARCHAR(30) DEFAULT 'not_requested'"),
+        ("criteria_version", "INTEGER DEFAULT 1"),
     ),
     "assignment_reviewers": (
         ("user_id", "INTEGER"),
@@ -33,6 +38,10 @@ REQUIRED_COLUMNS: dict[str, tuple[tuple[str, str], ...]] = {
         ("student_user_id", "INTEGER"),
         ("reviewer_user_id", "INTEGER"),
         ("criterion_scores", "JSON"),
+        ("source_type", "VARCHAR(30) DEFAULT 'url'"),
+        ("source_file_path", "VARCHAR(1024)"),
+        ("evaluation_status", "VARCHAR(30) DEFAULT 'not_requested'"),
+        ("latest_evaluation_id", "INTEGER"),
     ),
 }
 

@@ -148,6 +148,13 @@ class SubmissionOut(BaseModel):
     ai_draft: dict | None
     criterion_scores: list[dict] | None
     reviewer_user_id: int | None
+    source_type: str = "url"
+    source_file_path: str | None = None
+    evaluation_status: str = "not_requested"
+    latest_evaluation_id: int | None = None
+    review_json: dict | None = None
+    ai_assessment_json: dict | None = None
+    pdf_report_path: str | None = None
 
 
 class AssignmentOut(BaseModel):

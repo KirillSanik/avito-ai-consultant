@@ -22,8 +22,20 @@ services:
       DATABASE_URL: postgresql+psycopg://ai_reviewer:ai_reviewer@postgres:5432/ai_reviewer
       REDIS_URL: redis://redis:6379/0
       SEED_DEMO_DATA: "false"
+      STORAGE_DIR: /app/storage
+      LLM_PROVIDER: ${LLM_PROVIDER:-openrouter}
+      LLM_MODEL: ${LLM_MODEL:-google/gemma-3-27b-it:free}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434/v1}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen2.5-coder}
+      LLM_MAX_INPUT_CHARS: ${LLM_MAX_INPUT_CHARS:-60000}
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
     ports:
       - "8000:8000"
+    volumes:
+      - backend_storage:/app/storage
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     healthcheck:
       test:
         - CMD
@@ -43,6 +55,18 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://ai_reviewer:ai_reviewer@postgres:5432/ai_reviewer
       REDIS_URL: redis://redis:6379/0
+      STORAGE_DIR: /app/storage
+      LLM_PROVIDER: ${LLM_PROVIDER:-openrouter}
+      LLM_MODEL: ${LLM_MODEL:-google/gemma-3-27b-it:free}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434/v1}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen2.5-coder}
+      LLM_MAX_INPUT_CHARS: ${LLM_MAX_INPUT_CHARS:-60000}
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+    volumes:
+      - backend_storage:/app/storage
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       redis:
         condition: service_started
@@ -71,3 +95,4 @@ services:
 
 volumes:
   postgres_data_v2:
+  backend_storage:

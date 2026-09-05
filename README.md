@@ -11,6 +11,17 @@ PoC рабочего места ревьюера и методиста для п
 
 ## Запуск через Docker
 
+Требуется Docker Engine с Docker Compose v2. Для AI-проверки укажите
+`OPENROUTER_API_KEY` в корневом файле `.env`:
+
+```bash
+cp backend/.env.example .env
+```
+
+Для демонстрации интерфейса без запуска AI-проверки ключ можно оставить пустым.
+Для реальной проверки GitHub-репозиториев задайте также `GITHUB_TOKEN` (нужен для
+приватных репозиториев). Затем выполните:
+
 ```bash
 docker compose up --build
 ```
@@ -19,6 +30,11 @@ docker compose up --build
 - Студенческий портал: http://localhost:3001
 - API: http://localhost:8000
 - OpenAPI: http://localhost:8000/docs
+
+Compose поднимает PostgreSQL, Redis, FastAPI API, Celery worker, интерфейс
+ревьюера и студенческий портал. Данные PostgreSQL и сохранённые загруженные
+файлы/PDF-отчёты находятся в Docker volumes. Остановить сервисы можно через
+`docker compose down`; добавить `-v` следует только если нужно удалить и данные.
 
 ## Локальная разработка
 
@@ -29,6 +45,10 @@ cd backend
 python3.12 -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev]"
+cp .env.example .env
+set -a
+source .env
+set +a
 uvicorn app.main:app --reload
 ```
 
@@ -49,7 +69,33 @@ npm run dev
 ```
 
 Без `DATABASE_URL` backend использует локальную SQLite. PostgreSQL и Redis
-поднимаются через Docker Compose.
+поднимаются через Docker Compose. Для локального запуска Celery в четвёртом
+терминале используйте:
+
+```bash
+cd backend
+source .venv/bin/activate
+set -a
+source .env
+set +a
+celery -A app.tasks.celery_app worker --loglevel=info
+```
+
+## AI-проверка работ
+
+Методист загружает файл задания PDF, DOCX, XLSX или Markdown через
+`POST /api/assignments/{assignment_id}/task-file`. Backend извлекает текст,
+сохраняет структурированную рубрику и версию критериев. Ревьюер запускает
+`POST /api/submissions/{submission_id}/ai-draft`; это ставит Celery-задачу в
+очередь. После завершения в деталях сдачи доступны статус, структурированный
+отчёт, AI-оценка происхождения работы и постоянный PDF по адресу
+`/api/submissions/{submission_id}/report.pdf`.
+
+Для запуска реальной оценки обязательны `OPENROUTER_API_KEY` и доступная
+модель OpenRouter. Установите `LLM_PROVIDER=ollama` для OpenAI-совместимого
+локального Ollama-сервера; при этом задаются `OLLAMA_BASE_URL` и
+`OLLAMA_MODEL`. `GITHUB_TOKEN` является опциональным для публичных и
+необходимым для приватных репозиториев.
 
 ## Реализованный сценарий
 
@@ -66,6 +112,6 @@ npm run dev
 - ревьюер: `reviewer` / `reviewer`;
 - методист: `methodist` / `methodist`.
 
-AI-анализ сейчас детерминированный: это безопасная заглушка для проверки
-workflow. Реальные GitHub, LLM, Google Sheets и Telegram подключаются через
-переменные из `backend/.env.example` после выдачи тестовых доступов.
+AI-черновик выполняется асинхронно в Celery. Ручное ревью остаётся источником
+окончательного решения и не изменяет существующие права доступа или очередь
+ревьюеров.

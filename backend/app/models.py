@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, JSON, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, JSON, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .database import Base
@@ -104,6 +104,11 @@ class Assignment(Base):
     criteria_url: Mapped[str] = mapped_column(String(500), default="")
     criteria: Mapped[list[dict]] = mapped_column(JSON)
     reviewer_guide: Mapped[str] = mapped_column(Text)
+    task_file_path: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    rubric_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    task_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    rubric_status: Mapped[str] = mapped_column(String(30), default="not_requested")
+    criteria_version: Mapped[int] = mapped_column(Integer, default=1)
     course: Mapped[Course] = relationship(back_populates="assignments")
     submissions: Mapped[list["Submission"]] = relationship(
         back_populates="assignment", cascade="all, delete-orphan"
@@ -157,9 +162,36 @@ class Submission(Base):
     integrity_flag: Mapped[str | None] = mapped_column(Text, nullable=True)
     ai_draft: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     criterion_scores: Mapped[list[dict] | None] = mapped_column(JSON, nullable=True)
+    source_type: Mapped[str] = mapped_column(String(30), default="url")
+    source_file_path: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    evaluation_status: Mapped[str] = mapped_column(String(30), default="not_requested")
+    latest_evaluation_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     assignment: Mapped[Assignment] = relationship(back_populates="submissions")
     student: Mapped[User | None] = relationship(foreign_keys=[student_user_id])
     reviewer_user: Mapped[User | None] = relationship(foreign_keys=[reviewer_user_id])
+    evaluations: Mapped[list["Evaluation"]] = relationship(
+        back_populates="submission", cascade="all, delete-orphan"
+    )
+
+
+class Evaluation(Base):
+    __tablename__ = "evaluations"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    submission_id: Mapped[int] = mapped_column(ForeignKey("submissions.id"), index=True)
+    rubric_version: Mapped[int] = mapped_column(Integer, default=1)
+    review_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    ai_assessment_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    total_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    max_total_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    pdf_report_path: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    status: Mapped[str] = mapped_column(String(30), default="queued")
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    submission: Mapped[Submission] = relationship(back_populates="evaluations")
 
 
 class ClarificationRequest(Base):
