@@ -157,7 +157,7 @@ class Submission(Base):
     stepik_url: Mapped[str] = mapped_column(String(500))
     status: Mapped[str] = mapped_column(String(30), default="pending")
     reviewer: Mapped[str | None] = mapped_column(String(120), nullable=True)
-    score: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    score: Mapped[float | None] = mapped_column(Float, nullable=True)
     summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     integrity_flag: Mapped[str | None] = mapped_column(Text, nullable=True)
     ai_draft: Mapped[dict | None] = mapped_column(JSON, nullable=True)

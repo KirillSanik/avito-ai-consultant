@@ -562,7 +562,7 @@ def student_course_out(
         capacity=course.capacity,
         enrolled_count=enrolled_count(course.id, db),
         enrollment_status=status_value,
-        total_points=int(total_points),
+        total_points=float(total_points),
     )
     if not include_assignments:
         return StudentCourseOut(**values)

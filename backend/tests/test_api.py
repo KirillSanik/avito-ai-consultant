@@ -142,7 +142,7 @@ def _auth_headers(client: TestClient, login: str, password: str) -> dict[str, st
     return {"Authorization": f"Bearer {token}"}
 
 
-def _review_payload(assignment: dict, scores: list[int] | None = None) -> dict:
+def _review_payload(assignment: dict, scores: list[float] | None = None) -> dict:
     criteria = assignment["criteria"]
     values = scores if scores is not None else [item["max_score"] for item in criteria]
     return {
@@ -349,6 +349,33 @@ def test_main_reviewer_flow(client: TestClient) -> None:
     assert review.json()["status"] == "reviewed"
     assert review.json()["score"] == 39
     assert len(review.json()["criterion_scores"]) == 4
+
+
+def test_reviewer_can_save_fractional_scores(client: TestClient) -> None:
+    headers = _auth_headers(client, "reviewer", "reviewer")
+    course_id = client.get(
+        "/api/courses", params={"active": "true"}, headers=headers
+    ).json()[0]["id"]
+    listed = client.get(
+        f"/api/courses/{course_id}/assignments", headers=headers
+    ).json()
+    assignment_id = listed[1]["id"] if len(listed) > 1 else listed[0]["id"]
+    body = client.get(
+        f"/api/assignments/{assignment_id}", headers=headers
+    ).json()
+    submission_id = body["submissions"][0]["id"]
+    assert len(body["criteria"]) == 3
+
+    review = client.put(
+        f"/api/submissions/{submission_id}/review",
+        headers=headers,
+        json=_review_payload(body, [19.5, 14.5, 8.25]),
+    )
+    assert review.status_code == 200
+    assert review.json()["status"] == "reviewed"
+    assert review.json()["score"] == 42.25
+    scores = review.json()["criterion_scores"]
+    assert [item["score"] for item in scores] == [19.5, 14.5, 8.25]
 
 
 def test_ai_draft_returns_existing_evaluation_without_dispatch(client: TestClient) -> None:

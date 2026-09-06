@@ -87,7 +87,7 @@ class CourseReviewerOut(BaseModel):
 
 class Criterion(BaseModel):
     title: str = Field(min_length=2, max_length=200)
-    max_score: int = Field(ge=0)
+    max_score: float = Field(ge=0)
     description: str = Field(default="", max_length=2000)
 
 
@@ -130,7 +130,7 @@ class SubmissionOut(BaseModel):
     stepik_url: str
     status: str
     reviewer: str | None
-    score: int | None
+    score: float | None
     summary: str | None
     integrity_flag: str | None
     ai_draft: dict | None
@@ -169,7 +169,7 @@ class AssignmentOut(BaseModel):
 
 class CriterionScoreInput(BaseModel):
     criterion_index: int = Field(ge=0)
-    score: int = Field(ge=0)
+    score: float = Field(ge=0)
     comment: str = Field(default="", max_length=2000)
 
 
@@ -256,7 +256,7 @@ class StudentSubmissionOut(BaseModel):
     id: int
     work_url: str
     status: str
-    score: int | None
+    score: float | None
     summary: str | None
     source_type: str = "url"
     source_filename: str | None = None
@@ -284,7 +284,7 @@ class StudentCourseOut(BaseModel):
     capacity: int
     enrolled_count: int
     enrollment_status: EnrollmentStatus
-    total_points: int = 0
+    total_points: float = 0
 
 
 class StudentCourseDetailOut(StudentCourseOut):
