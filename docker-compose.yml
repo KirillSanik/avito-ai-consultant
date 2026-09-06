@@ -1,0 +1,117 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ai_reviewer
+      POSTGRES_USER: ai_reviewer
+      POSTGRES_PASSWORD: ai_reviewer
+    volumes:
+      - postgres_data_v2:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ai_reviewer"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+
+  backend:
+    build: ./backend
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql+psycopg://ai_reviewer:ai_reviewer@postgres:5432/ai_reviewer
+      REDIS_URL: redis://redis:6379/0
+      SEED_DEMO_DATA: "false"
+      STORAGE_DIR: /app/storage
+      LLM_PROVIDER: ${LLM_PROVIDER:-cloud}
+      LLM_MODEL: ${LLM_MODEL:-qwen/qwen3.8-flash}
+      POLZA_API_KEY: ${POLZA_API_KEY:-}
+      POLZA_BASE_URL: ${POLZA_BASE_URL:-https://polza.ai/api/v1}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434/v1}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen2.5-coder}
+      LLM_MAX_INPUT_CHARS: ${LLM_MAX_INPUT_CHARS:-60000}
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+      TG_NOTIFY_URL: ${TG_NOTIFY_URL:-}
+      TG_NOTIFY_API_KEY: ${TG_NOTIFY_API_KEY:-}
+      TG_NOTIFY_CHAT_IDS: ${TG_NOTIFY_CHAT_IDS:-}
+    ports:
+      - "8000:8000"
+    volumes:
+      - backend_storage:/app/storage
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  worker:
+    build: ./backend
+    command: celery -A app.tasks.celery_app worker --loglevel=info
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql+psycopg://ai_reviewer:ai_reviewer@postgres:5432/ai_reviewer
+      REDIS_URL: redis://redis:6379/0
+      STORAGE_DIR: /app/storage
+      LLM_PROVIDER: ${LLM_PROVIDER:-cloud}
+      LLM_MODEL: ${LLM_MODEL:-qwen/qwen3.8-flash}
+      POLZA_API_KEY: ${POLZA_API_KEY:-}
+      POLZA_BASE_URL: ${POLZA_BASE_URL:-https://polza.ai/api/v1}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434/v1}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen2.5-coder}
+      LLM_MAX_INPUT_CHARS: ${LLM_MAX_INPUT_CHARS:-60000}
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+      TG_NOTIFY_URL: ${TG_NOTIFY_URL:-}
+      TG_NOTIFY_API_KEY: ${TG_NOTIFY_API_KEY:-}
+      TG_NOTIFY_CHAT_IDS: ${TG_NOTIFY_CHAT_IDS:-}
+    volumes:
+      - backend_storage:/app/storage
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      redis:
+        condition: service_started
+      backend:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: ./frontend
+      network: host  # <-- Добавить эту строку
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:8000
+      INTERNAL_API_URL: http://backend:8000
+      NEXT_PUBLIC_TG_BOT_NAME: ${NEXT_PUBLIC_TG_BOT_NAME:-review_help_AIHACK_bot}
+    ports:
+      - "3000:3000"
+    depends_on:
+      backend:
+        condition: service_healthy
+
+  student-portal:
+    build:
+      context: ./student-portal
+      network: host  # <-- Добавить эту строку
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:8000
+      INTERNAL_API_URL: http://backend:8000
+    ports:
+      - "3001:3000"
+    depends_on:
+      backend:
+        condition: service_healthy
+
+volumes:
+  postgres_data_v2:
+  backend_storage:
