@@ -156,3 +156,18 @@ docker compose logs --tail=200 backend worker
 В локальном запуске эти сообщения появляются в терминалах `uvicorn` и Celery;
 события имеют имена вроде `evaluation.enqueue.accepted` и
 `evaluation.task.completed`.
+
+## Telegram-уведомления
+
+Сервис `tg-notify` запускается вместе с compose-стеком на порту `8010` и
+использует общий Redis. Для его настройки добавьте в корневой `.env` только
+свои значения переменных:
+
+```dotenv
+TELEGRAM_BOT_TOKEN=your_telegram_bot_token_here
+NOTIFY_API_KEY=your_custom_secret_key_here
+REDIS_URL=redis://redis:6379/0
+```
+
+Подробности интеграции и запуск отдельных контейнеров описаны в
+`README_TG_BOT.md`.

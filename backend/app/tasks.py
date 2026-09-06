@@ -1,14 +1,16 @@
 import asyncio
 import logging
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from aiogram import Bot
 from celery import Celery
 from sqlalchemy import select, update
+from redis import Redis
 from .database import SessionLocal
-from .models import Evaluation, Submission
+from .models import Assignment, EnrollmentApplication, Evaluation, Submission, User
+from .services.telegram_notifier import send_telegram_notification
 from .services.contracts import TaskRubric
 from .services.pipeline import EvaluationPipeline
 from .services.reporting import generate_review_pdf
@@ -30,6 +32,12 @@ celery_app.conf.update(
     broker_connection_timeout=2,
     broker_connection_retry=False,
 )
+celery_app.conf.beat_schedule = {
+    "telegram-deadline-reminders-hourly": {
+        "task": "notifications.deadline_reminders",
+        "schedule": 3600.0,
+    }
+}
 if not redis_url:
     # Локальный запуск без Redis: задачи выполняются синхронно в процессе API.
     celery_app.conf.task_always_eager = True
@@ -64,6 +72,71 @@ def deadline_reminder(course: str, assignment: str, deadline: str) -> dict[str, 
         "assignment": assignment,
         "deadline": deadline,
     }
+
+
+@celery_app.task(name="notifications.deadline_reminders")
+def send_deadline_reminders() -> dict[str, int]:
+    db = SessionLocal()
+    sent = 0
+    assignments_count = 0
+    try:
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        cutoff = now + timedelta(hours=24)
+        assignments = db.scalars(
+            select(Assignment).where(
+                Assignment.deadline > now,
+                Assignment.deadline <= cutoff,
+            )
+        ).all()
+        redis_client = None
+        redis_url_value = os.getenv("REDIS_URL", "")
+        if redis_url_value:
+            try:
+                redis_client = Redis.from_url(redis_url_value, decode_responses=True)
+            except Exception:
+                logger.exception("Unable to initialize reminder deduplication cache")
+        for assignment in assignments:
+            assignments_count += 1
+            submitted = set(
+                db.scalars(
+                    select(Submission.student_user_id).where(
+                        Submission.assignment_id == assignment.id,
+                        Submission.student_user_id.is_not(None),
+                    )
+                ).all()
+            )
+            students = db.scalars(
+                select(User)
+                .join(EnrollmentApplication, EnrollmentApplication.user_id == User.id)
+                .where(
+                    EnrollmentApplication.course_id == assignment.course_id,
+                    EnrollmentApplication.status == "enrolled",
+                    User.role == "student",
+                )
+            ).all()
+            nicks = []
+            for student in students:
+                if student.id in submitted or not student.telegram:
+                    continue
+                key = f"tg-reminder:{assignment.id}:{student.id}"
+                if redis_client is not None:
+                    try:
+                        if not redis_client.set(key, "1", nx=True, ex=172800):
+                            continue
+                    except Exception:
+                        logger.exception("Reminder deduplication failed key=%s", key)
+                nicks.append(student.telegram)
+            if nicks:
+                deadline_text = assignment.deadline.strftime("%d.%m.%Y %H:%M")
+                message = f"Дедлайн по «{assignment.title}» через 24 часа ({deadline_text})!"
+                if asyncio.run(send_telegram_notification(nicks=nicks, message=message)):
+                    sent += len(nicks)
+        return {"assignments": assignments_count, "sent": sent}
+    except Exception:
+        logger.exception("Deadline reminder task failed")
+        return {"assignments": assignments_count, "sent": sent}
+    finally:
+        db.close()
 
 
 @celery_app.task(name="evaluations.evaluate_submission")

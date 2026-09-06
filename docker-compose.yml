@@ -15,6 +15,11 @@ services:
 
   redis:
     image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
 
   backend:
     build: ./backend
@@ -75,8 +80,62 @@ services:
       - "host.docker.internal:host-gateway"
     depends_on:
       redis:
-        condition: service_started
+        condition: service_healthy
       backend:
+        condition: service_healthy
+
+  worker-beat:
+    build: ./backend
+    command: celery -A app.tasks.celery_app beat --loglevel=info
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql+psycopg://ai_reviewer:ai_reviewer@postgres:5432/ai_reviewer
+      REDIS_URL: redis://redis:6379/0
+      STORAGE_DIR: /app/storage
+      NOTIFY_API_KEY: ${NOTIFY_API_KEY:-}
+      TG_NOTIFY_URL: http://tg-notify:8010/notify
+    volumes:
+      - backend_storage:/app/storage
+    depends_on:
+      redis:
+        condition: service_healthy
+      backend:
+        condition: service_healthy
+
+  tg-notify:
+    build: ./tg-notify
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8010
+    environment:
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      NOTIFY_API_KEY: ${NOTIFY_API_KEY:-}
+      REDIS_URL: redis://redis:6379/0
+    ports:
+      - "8010:8010"
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  tg-notify-worker:
+    build: ./tg-notify
+    command: celery -A app.celery_app.celery_app worker --loglevel=info -Q tg_notify
+    environment:
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      NOTIFY_API_KEY: ${NOTIFY_API_KEY:-}
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  tg-notify-bot:
+    build: ./tg-notify
+    command: python -m app
+    environment:
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      NOTIFY_API_KEY: ${NOTIFY_API_KEY:-}
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      redis:
         condition: service_healthy
 
   frontend:
