@@ -34,7 +34,7 @@ class EvaluationPipeline:
                 rubric.task_id,
                 extracted_text,
             )
-            ai_assessment = await self._assess_ai_origin(rubric, submission, [], submission.raw_text)
+            commits: list[dict] = []
         else:
             repository = await self.cloner.clone(source)
             try:
@@ -42,12 +42,13 @@ class EvaluationPipeline:
                     self.submissions.build_from_local_repository, repository, submission_id, rubric.task_id
                 )
                 commits = await asyncio.to_thread(self.detector._commits, repository)
-                ai_assessment = await self._assess_ai_origin(
-                    rubric, submission, commits, submission.raw_text
-                )
             finally:
                 shutil.rmtree(repository.parent, ignore_errors=True)
-        results = await self._grade_submission(rubric, submission)
+        # Детекция ИИ и оценка критериев — независимые LLM-запросы, выполняем их параллельно.
+        ai_assessment, results = await asyncio.gather(
+            self._assess_ai_origin(rubric, submission, commits, submission.raw_text),
+            self._grade_submission(rubric, submission),
+        )
         total = sum(item.assigned_score for item in results)
         maximum = sum(item.max_points for item in results)
         report = EvaluationReport(task_id=rubric.task_id, submission_id=submission_id, total_score=total, max_total_score=maximum, criterion_results=results, summary_feedback=self._summary(results, total, maximum))
