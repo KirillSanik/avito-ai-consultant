@@ -164,6 +164,8 @@ class Submission(Base):
     criterion_scores: Mapped[list[dict] | None] = mapped_column(JSON, nullable=True)
     source_type: Mapped[str] = mapped_column(String(30), default="url")
     source_file_path: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    source_filename: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    source_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     evaluation_status: Mapped[str] = mapped_column(String(30), default="not_requested")
     latest_evaluation_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     assignment: Mapped[Assignment] = relationship(back_populates="submissions")

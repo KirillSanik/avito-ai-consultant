@@ -17,7 +17,12 @@ import type {
 import { activityLogger } from "./logger";
 
 
-export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+export function apiBaseUrl() {
+  if (typeof window === "undefined") {
+    return process.env.INTERNAL_API_URL ?? process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+  }
+  return process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+}
 const AUTH_STORAGE_KEY = "reviewdesk.session";
 
 let authToken: string | null = null;
@@ -58,7 +63,7 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
   activityLogger.info("api.request", { method, path });
   let response: Response;
   try {
-    response = await fetch(`${API_URL}${path}`, {
+    response = await fetch(`${apiBaseUrl()}${path}`, {
       ...init,
       headers: {
         "Content-Type": "application/json",
@@ -94,7 +99,7 @@ async function requestError(response: Response): Promise<Error> {
 
 export async function downloadBlob(path: string, filename: string) {
   activityLogger.info("download.start", { path, filename });
-  const response = await fetch(`${API_URL}${path}`, {
+  const response = await fetch(`${apiBaseUrl()}${path}`, {
     headers: {
       ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
     },
@@ -121,7 +126,7 @@ export async function uploadXlsx(
   form.append("file", file);
   const separator = path.includes("?") ? "&" : "?";
   const response = await fetch(
-    `${API_URL}${path}${separator}confirm=${confirm ? "true" : "false"}`,
+    `${apiBaseUrl()}${path}${separator}confirm=${confirm ? "true" : "false"}`,
     {
       method: "POST",
       headers: {
@@ -172,11 +177,30 @@ export const courseApi = {
     api<HomeworkListItem[]>(
       `/api/courses/${courseId}/assignments${asReviewer ? "?as_reviewer=true" : ""}`,
     ),
-  createHomework: (courseId: number, payload: HomeworkCreate) =>
-    api<HomeworkListItem>(`/api/courses/${courseId}/assignments`, {
+  createHomework: async (courseId: number, payload: HomeworkCreate, file?: File | null) => {
+    if (!file) {
+      return api<HomeworkListItem>(`/api/courses/${courseId}/assignments`, {
+        method: "POST",
+        body: JSON.stringify(payload),
+      });
+    }
+    const form = new FormData();
+    form.append("title", payload.title);
+    form.append("deadline", payload.deadline);
+    form.append("task_url", payload.task_url);
+    form.append("criteria_url", payload.criteria_url ?? "");
+    form.append("reviewer_guide", payload.reviewer_guide ?? "");
+    form.append("criteria", JSON.stringify(payload.criteria ?? []));
+    form.append("reviewer_user_ids", JSON.stringify(payload.reviewer_user_ids ?? []));
+    form.append("file", file);
+    const response = await fetch(`${apiBaseUrl()}/api/courses/${courseId}/assignments`, {
       method: "POST",
-      body: JSON.stringify(payload),
-    }),
+      headers: authToken ? { Authorization: `Bearer ${authToken}` } : {},
+      body: form,
+    });
+    if (!response.ok) throw await requestError(response);
+    return response.json() as Promise<HomeworkListItem>;
+  },
   reviewerCatalog: () => api<User[]>("/api/reviewers"),
   reviewers: (courseId: number) =>
     api<CourseReviewer[]>(`/api/courses/${courseId}/reviewers`),
@@ -215,12 +239,10 @@ export const homeworkApi = {
     api<Assignment>(`/api/assignments/${id}${asReviewer ? "?as_reviewer=true" : ""}`),
   getSubmission: (id: number) => api<Submission>(`/api/submissions/${id}`),
   next: (id: number) => api<Submission>(`/api/assignments/${id}/next`),
-  createDraft: (submissionId: number) =>
-    api<Submission>(`/api/submissions/${submissionId}/ai-draft`, { method: "POST" }),
   uploadTaskFile: (assignmentId: number, file: File) => {
     const form = new FormData();
     form.append("file", file);
-    return fetch(`${API_URL}/api/assignments/${assignmentId}/task-file`, {
+    return fetch(`${apiBaseUrl()}/api/assignments/${assignmentId}/task-file`, {
       method: "POST",
       headers: authToken ? { Authorization: `Bearer ${authToken}` } : {},
       body: form,

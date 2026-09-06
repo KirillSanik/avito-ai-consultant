@@ -24,6 +24,7 @@ export function MethodistHomework({
   const [showAddReviewer, setShowAddReviewer] = useState(false);
   const [openedSubmission, setOpenedSubmission] = useState<Submission | null>(null);
   const [taskFile, setTaskFile] = useState<File | null>(null);
+  const [taskFileError, setTaskFileError] = useState("");
 
   const reviewers = useQuery({
     queryKey: ["reviewers", assignment.id],
@@ -93,10 +94,9 @@ export function MethodistHomework({
   const availableCourseReviewers = (courseReviewers.data ?? []).filter(
     (item) => !assignedUserIds.has(item.user_id),
   );
-  const criteriaTotal = criteria.reduce((sum, item) => sum + Number(item.max_score || 0), 0);
-  const criteriaInvalid = criteriaTotal !== 100;
   const reviewed = assignment.submissions.filter((item) => item.status === "reviewed").length;
   const total = assignment.submissions.length;
+  const maximumScore = assignment.criteria.reduce((sum, criterion) => sum + criterion.max_score, 0);
   const progress = total > 0 ? Math.round((reviewed / total) * 100) : 0;
   const suggestions = (dashboard.data?.clarifications ?? []).filter(
     (item) => item.assignment_id === assignment.id && item.status === "open",
@@ -106,7 +106,7 @@ export function MethodistHomework({
     <div className="space-y-5">
       <section className="card p-5">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <ResourceLinks taskUrl={assignment.task_url} criteriaUrl={assignment.criteria_url} />
+          <ResourceLinks taskUrl={assignment.task_url} taskFileUrl={assignment.task_file_url} criteriaUrl={assignment.criteria_url} />
           <button
             type="button"
             className="button-secondary py-1.5 text-xs"
@@ -115,13 +115,23 @@ export function MethodistHomework({
             Скачать XLSX
           </button>
         </div>
-        <div className="mt-4 border-t border-border pt-4">
+        {!assignment.task_file_url && <div className="mt-4 border-t border-border pt-4">
           <p className="field-label">Файл условия для AI-разбора</p>
           <div className="flex flex-wrap items-center gap-3">
             <input
               type="file"
               accept=".pdf,.docx,.xlsx,.md"
-              onChange={(event) => setTaskFile(event.target.files?.[0] ?? null)}
+              onChange={(event) => {
+                const selectedFile = event.target.files?.[0] ?? null;
+                if (!selectedFile) return;
+                if (selectedFile.size > 20 * 1024 * 1024) {
+                  setTaskFile(null);
+                  setTaskFileError("Размер файла не должен превышать 20 МБ");
+                  return;
+                }
+                setTaskFileError("");
+                setTaskFile(selectedFile);
+              }}
             />
             <button
               type="button"
@@ -138,11 +148,18 @@ export function MethodistHomework({
               {uploadTask.isPending ? "Разбираем…" : "Загрузить и разобрать"}
             </button>
           </div>
+          {taskFile && (
+            <div className="mt-3 flex items-center justify-between gap-3 rounded-lg border border-border bg-secondary p-3 text-xs text-muted">
+              <span>📄 {taskFile.name} · {(taskFile.size / 1024 / 1024).toFixed(1)} МБ</span>
+              <button type="button" className="text-accent hover:underline" onClick={() => setTaskFile(null)}>Заменить файл</button>
+            </div>
+          )}
+          {taskFileError && <p className="mt-2 text-xs text-danger">{taskFileError}</p>}
           {uploadTask.error && <p className="mt-2 text-xs text-danger">{uploadTask.error.message}</p>}
           {assignment.rubric_status && assignment.rubric_status !== "not_requested" && (
             <p className="mt-2 text-xs text-muted">Статус рубрики: {assignment.rubric_status}</p>
           )}
-        </div>
+        </div>}
       </section>
 
       <section className="card p-5">
@@ -169,13 +186,13 @@ export function MethodistHomework({
             <div className="flex flex-wrap gap-3">
               <button
                 type="button"
-                className="text-xs font-medium text-accent hover:underline"
+                className="rounded-lg border border-accent bg-transparent px-3 py-2 text-base font-medium text-accent transition hover:bg-accent/5"
                 disabled={!availableCourseReviewers.length || addAllReviewers.isPending}
                 onClick={() => addAllReviewers.mutate()}
               >
                 {addAllReviewers.isPending ? "Добавляем…" : "Добавить всех с курса"}
               </button>
-              <button className="text-xs font-medium text-accent hover:underline" onClick={() => setShowAddReviewer(true)}>
+              <button className="rounded-lg border border-accent bg-transparent px-3 py-2 text-base font-medium text-accent transition hover:bg-accent/5" onClick={() => setShowAddReviewer(true)}>
                 + Назначить ревьюера
               </button>
             </div>
@@ -202,7 +219,7 @@ export function MethodistHomework({
               </select>
               <button
                 type="button"
-                className="button-primary py-1.5 text-xs"
+                className="rounded-lg border border-accent bg-transparent px-3 py-2 text-base font-medium text-accent transition hover:bg-accent/5"
                 disabled={!selectedReviewerId || addReviewer.isPending}
                 onClick={() => addReviewer.mutate(Number(selectedReviewerId))}
               >
@@ -317,62 +334,69 @@ export function MethodistHomework({
           <div className="space-y-3">
             {criteria.map((criterion, index) => (
               <div key={index} className="space-y-2 rounded-lg border border-border p-3">
-                <div className="grid grid-cols-[1fr_100px_auto] gap-2">
-                  <input
-                    value={criterion.title}
-                    onChange={(event) =>
-                      setCriteria((current) =>
-                        current.map((item, itemIndex) =>
-                          index === itemIndex ? { ...item, title: event.target.value } : item,
-                        ),
-                      )
-                    }
-                    placeholder="Название критерия"
-                  />
-                  <input
-                    type="number"
-                    min={0}
-                    max={100}
-                    value={criterion.max_score}
-                    onChange={(event) =>
-                      setCriteria((current) =>
-                        current.map((item, itemIndex) =>
-                          index === itemIndex ? { ...item, max_score: Number(event.target.value) } : item,
-                        ),
-                      )
-                    }
-                  />
-                  <button
-                    type="button"
-                    className="text-xs text-muted hover:text-danger"
-                    disabled={criteria.length <= 1}
-                    onClick={() => setCriteria((current) => current.filter((_, itemIndex) => itemIndex !== index))}
-                  >
-                    Удалить
-                  </button>
-                </div>
-                <textarea
-                  rows={2}
-                  value={criterion.description ?? ""}
-                  placeholder="Описание критерия"
+            <div className="grid gap-2 sm:grid-cols-[1fr_140px]">
+              <label>
+                <span className="field-label">Название критерия</span>
+                <input
+                  value={criterion.title}
                   onChange={(event) =>
                     setCriteria((current) =>
                       current.map((item, itemIndex) =>
-                        index === itemIndex ? { ...item, description: event.target.value } : item,
+                        index === itemIndex ? { ...item, title: event.target.value } : item,
+                      ),
+                    )
+                  }
+                  placeholder="Название критерия"
+                />
+              </label>
+              <label>
+                <span className="field-label">Баллы</span>
+                <input
+                  className="appearance-none [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+                  type="number"
+                  step="any"
+                  min={0}
+                  value={criterion.max_score === 0 ? "" : criterion.max_score}
+                  onChange={(event) =>
+                    setCriteria((current) =>
+                      current.map((item, itemIndex) =>
+                        index === itemIndex ? { ...item, max_score: Number(event.target.value) } : item,
                       ),
                     )
                   }
                 />
-              </div>
-            ))}
-            <p className={`text-xs ${criteriaInvalid ? "text-danger" : "text-success"}`}>
-              Сумма баллов: {criteriaTotal} / 100. Должно быть ровно 100.
-            </p>
+              </label>
+            </div>
+            <label className="block">
+              <span className="field-label">Описание критерия</span>
+              <textarea
+                rows={2}
+                value={criterion.description ?? ""}
+                placeholder="Описание критерия"
+                onChange={(event) =>
+                  setCriteria((current) =>
+                    current.map((item, itemIndex) =>
+                      index === itemIndex ? { ...item, description: event.target.value } : item,
+                    ),
+                  )
+                }
+              />
+            </label>
             <button
               type="button"
-              className="text-xs font-medium text-accent hover:underline"
+              className="rounded-full border border-red-500/20 bg-red-500/10 px-3 py-1 text-sm font-medium text-red-600 transition hover:bg-red-500/20"
+              disabled={criteria.length <= 1}
+              onClick={() => setCriteria((current) => current.filter((_, itemIndex) => itemIndex !== index))}
+            >
+              Удалить этот критерий
+            </button>
+              </div>
+            ))}
+            <button
+              type="button"
+              className="rounded-lg border border-accent bg-transparent px-3 py-2 text-base font-medium text-accent transition hover:bg-accent/5"
               onClick={() =>
-                setCriteria((current) => [...current, { title: "Новый критерий", max_score: 10, description: "" }])
+                setCriteria((current) => [...current, { title: "Новый критерий", max_score: 1, description: "" }])
               }
             >
               + Добавить критерий
@@ -385,7 +409,7 @@ export function MethodistHomework({
           <button
             type="button"
             className="button-primary"
-            disabled={saveCriteria.isPending || criteriaInvalid}
+            disabled={saveCriteria.isPending}
             onClick={() => saveCriteria.mutate()}
           >
             Сохранить изменения
@@ -425,7 +449,7 @@ export function MethodistHomework({
                     {student.status === "reviewed" && (
                       <button
                         type="button"
-                        className="text-xs font-medium text-accent hover:underline"
+                        className="rounded-lg border border-accent bg-transparent px-3 py-2 text-base font-medium text-accent transition hover:bg-accent/5"
                         onClick={() => {
                           void homeworkApi.getSubmission(student.id).then(setOpenedSubmission);
                         }}
@@ -455,7 +479,7 @@ export function MethodistHomework({
             <div className="rounded-lg bg-secondary p-4">
               <p className="text-xs text-muted">Итоговый балл</p>
               <p className="font-mono text-3xl font-semibold">
-                {openedSubmission.score ?? "—"} / 100
+                {openedSubmission.score ?? "—"} / {maximumScore}
               </p>
             </div>
             {(openedSubmission.criterion_scores ?? []).map((criterion) => (

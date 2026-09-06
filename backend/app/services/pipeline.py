@@ -17,10 +17,23 @@ class EvaluationPipeline:
         self.detector = AIDetectionService(self.llm)
         self.submissions = SubmissionParser()
 
-    async def run(self, submission_id: str, source_type: str, source: str, rubric: TaskRubric) -> ReviewResponse:
+    async def run(
+        self,
+        submission_id: str,
+        source_type: str,
+        source: str,
+        rubric: TaskRubric,
+        extracted_text: str | None = None,
+    ) -> ReviewResponse:
         if source_type == "file":
             path = Path(source)
-            submission = await asyncio.to_thread(self.submissions.parse_file, path, submission_id, rubric.task_id)
+            submission = await asyncio.to_thread(
+                self.submissions.parse_file,
+                path,
+                submission_id,
+                rubric.task_id,
+                extracted_text,
+            )
             ai_assessment = await self._assess_ai_origin(rubric, submission, [], submission.raw_text)
         else:
             repository = await self.cloner.clone(source)

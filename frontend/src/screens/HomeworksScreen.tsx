@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { FormEvent, useState } from "react";
+import { FormEvent, type RefObject, useEffect, useRef, useState } from "react";
 
 import { EmptyState, ErrorState, PageLoader, ProgressBar } from "@/components/ui";
 import { XlsxImportCard } from "@/components/xlsx";
@@ -27,12 +27,19 @@ export function HomeworksScreen({
   onSelect: (homework: HomeworkListItem) => void;
 }) {
   const [creating, setCreating] = useState(false);
+  const creationFormRef = useRef<HTMLFormElement>(null);
   const [tab, setTab] = useState<"homeworks" | "applications">("homeworks");
   const homeworks = useQuery({
     queryKey: ["homeworks", course.id, role],
     queryFn: () => courseApi.homeworks(course.id, role === "reviewer"),
   });
   const canCreateHomework = role === "methodist";
+
+  useEffect(() => {
+    if (creating) {
+      creationFormRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  }, [creating]);
 
   return (
     <div className="min-h-screen bg-background">
@@ -97,7 +104,11 @@ export function HomeworksScreen({
           </div>
         )}
 
-        <CourseDescriptionForm course={course} />
+        {tab === "homeworks" && <CourseDescriptionForm course={course} />}
+
+        {tab === "homeworks" && role === "methodist" && (
+          <CourseReviewersPanel courseId={course.id} currentUserId={currentUser?.id} />
+        )}
 
         {tab === "applications" && canCreateHomework ? (
           <ApplicationsPanel courseId={course.id} />
@@ -106,13 +117,10 @@ export function HomeworksScreen({
             {creating && canCreateHomework && (
               <CreateHomeworkForm
                 courseId={course.id}
+                formRef={creationFormRef}
                 onCancel={() => setCreating(false)}
                 onCreated={() => setCreating(false)}
               />
-            )}
-
-            {role === "methodist" && (
-              <CourseReviewersPanel courseId={course.id} currentUserId={currentUser?.id} />
             )}
 
             {homeworks.isLoading ? (
@@ -154,7 +162,6 @@ function CourseDescriptionForm({ course }: { course: Course }) {
 
   return (
     <section className="card mb-6 p-5">
-      <p className="eyebrow">О курсе</p>
       <h2 className="mb-3 text-lg font-semibold">Описание для студентов</h2>
       <textarea
         rows={4}
@@ -180,10 +187,12 @@ function CourseDescriptionForm({ course }: { course: Course }) {
 
 function CreateHomeworkForm({
   courseId,
+  formRef,
   onCancel,
   onCreated,
 }: {
   courseId: number;
+  formRef: RefObject<HTMLFormElement | null>;
   onCancel: () => void;
   onCreated: () => void;
 }) {
@@ -196,16 +205,16 @@ function CreateHomeworkForm({
     reviewer_guide: "Проверьте работу по критериям. AI-оценка является только черновиком.",
   });
   const [criteria, setCriteria] = useState<Criterion[]>([
-    { title: "", max_score: 10, description: "" },
+    { title: "", max_score: 1, description: "" },
   ]);
   const [selectedReviewerIds, setSelectedReviewerIds] = useState<number[]>([]);
   const [pickerId, setPickerId] = useState("");
+  const [taskFile, setTaskFile] = useState<File | null>(null);
+  const [taskFileError, setTaskFileError] = useState("");
   const courseReviewers = useQuery({
     queryKey: ["course-reviewers", courseId],
     queryFn: () => courseApi.reviewers(courseId),
   });
-  const criteriaTotal = criteria.reduce((sum, item) => sum + Number(item.max_score || 0), 0);
-  const criteriaInvalid = criteriaTotal !== 100;
   const selectedReviewers = (courseReviewers.data ?? []).filter((item) =>
     selectedReviewerIds.includes(item.user_id),
   );
@@ -213,8 +222,8 @@ function CreateHomeworkForm({
     (item) => !selectedReviewerIds.includes(item.user_id),
   );
   const create = useMutation({
-    mutationFn: () =>
-      courseApi.createHomework(courseId, {
+    mutationFn: async () => {
+      const homework = await courseApi.createHomework(courseId, {
         title: form.title,
         deadline: form.deadline.length === 16 ? `${form.deadline}:00` : form.deadline,
         task_url: form.task_url,
@@ -226,7 +235,9 @@ function CreateHomeworkForm({
           description: item.description?.trim() ?? "",
         })),
         reviewer_user_ids: selectedReviewerIds,
-      }),
+      }, taskFile);
+      return homework;
+    },
     onSuccess: async () => {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["homeworks", courseId] }),
@@ -238,11 +249,16 @@ function CreateHomeworkForm({
 
   function submit(event: FormEvent) {
     event.preventDefault();
+    if (!form.task_url.trim() && !taskFile) {
+      setTaskFileError("Добавьте ссылку на задание или файл условия");
+      return;
+    }
+    setTaskFileError("");
     create.mutate();
   }
 
   return (
-    <form className="card mb-6 grid gap-4 p-5 sm:grid-cols-2" onSubmit={submit}>
+    <form ref={formRef} className="card mb-6 grid gap-4 p-5 sm:grid-cols-2" onSubmit={submit}>
       <div className="sm:col-span-2">
         <p className="eyebrow">Новое задание</p>
         <h2 className="text-lg font-semibold">Создание домашнего задания</h2>
@@ -266,14 +282,39 @@ function CreateHomeworkForm({
           required
         />
       </label>
+      <div className="sm:col-span-2 rounded-lg border border-dashed border-accent/50 bg-secondary p-3">
+        <span className="field-label">Файл условия или справочный материал для AI</span>
+        <input
+          type="file"
+          accept=".pdf,.docx,.xlsx"
+          onChange={(event) => {
+            const selectedFile = event.target.files?.[0] ?? null;
+            if (!selectedFile) return;
+            if (selectedFile.size > 20 * 1024 * 1024) {
+              setTaskFile(null);
+              setTaskFileError("Размер файла не должен превышать 20 МБ");
+              return;
+            }
+            setTaskFileError("");
+            setTaskFile(selectedFile);
+          }}
+        />
+        {taskFile && (
+          <div className="mt-2 flex items-center justify-between gap-3 text-xs text-muted">
+            <span>📄 {taskFile.name} · {(taskFile.size / 1024 / 1024).toFixed(1)} МБ</span>
+            <button type="button" className="text-accent hover:underline" onClick={() => setTaskFile(null)}>Удалить файл</button>
+          </div>
+        )}
+        {taskFileError && <p className="mt-2 text-xs text-danger">{taskFileError}</p>}
+        {taskFile && <p className="mt-2 text-xs text-muted">После создания задания файл будет загружен и разобран автоматически.</p>}
+      </div>
       <label>
-        <span className="field-label">Ссылка на задание</span>
+        <span className="field-label">Ссылка на задание (если не прикладываете файл)</span>
         <input
           type="url"
           value={form.task_url}
           onChange={(event) => setForm((current) => ({ ...current, task_url: event.target.value }))}
           placeholder="https://github.com/..."
-          required
         />
       </label>
       <label className="sm:col-span-2">
@@ -285,81 +326,88 @@ function CreateHomeworkForm({
         />
       </label>
       <div className="sm:col-span-2 space-y-3">
-        <div className="flex items-center justify-between">
+        <div>
           <span className="field-label mb-0">Критерии</span>
-          <button
-            type="button"
-            className="text-xs font-medium text-accent hover:underline"
-            onClick={() =>
-              setCriteria((current) => [...current, { title: "", max_score: 10, description: "" }])
-            }
-          >
-            + Добавить критерий
-          </button>
         </div>
-        <p className={`text-xs ${criteriaInvalid ? "text-danger" : "text-success"}`}>
-          Сумма баллов: {criteriaTotal} / 100. Должно быть ровно 100.
-        </p>
         {criteria.map((criterion, index) => (
           <div key={index} className="space-y-2 rounded-lg border border-border p-3">
-            <div className="grid grid-cols-[1fr_100px_auto] gap-2">
-              <input
-                value={criterion.title}
-                onChange={(event) =>
-                  setCriteria((current) =>
-                    current.map((item, itemIndex) =>
-                      index === itemIndex ? { ...item, title: event.target.value } : item,
-                    ),
-                  )
-                }
-                placeholder="Название критерия"
-                required
-                minLength={2}
-              />
-              <input
-                type="number"
-                min={0}
-                max={100}
-                value={criterion.max_score}
-                onChange={(event) =>
-                  setCriteria((current) =>
-                    current.map((item, itemIndex) =>
-                      index === itemIndex ? { ...item, max_score: Number(event.target.value) } : item,
-                    ),
-                  )
-                }
-                required
-              />
-              <button
-                type="button"
-                className="text-xs text-muted hover:text-danger"
-                disabled={criteria.length <= 1}
-                onClick={() => setCriteria((current) => current.filter((_, itemIndex) => itemIndex !== index))}
-              >
-                Удалить
-              </button>
+            <div className="grid gap-2 sm:grid-cols-[1fr_140px]">
+              <label>
+                <span className="field-label">Название критерия</span>
+                <input
+                  value={criterion.title}
+                  onChange={(event) =>
+                    setCriteria((current) =>
+                      current.map((item, itemIndex) =>
+                        index === itemIndex ? { ...item, title: event.target.value } : item,
+                      ),
+                    )
+                  }
+                  placeholder="Название критерия"
+                  required
+                  minLength={2}
+                />
+              </label>
+              <label>
+                <span className="field-label">Баллы</span>
+                <input
+                  className="appearance-none [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+                  type="number"
+                  step="any"
+                  min={0}
+                  value={criterion.max_score === 0 ? "" : criterion.max_score}
+                  onChange={(event) =>
+                    setCriteria((current) =>
+                      current.map((item, itemIndex) =>
+                        index === itemIndex ? { ...item, max_score: Number(event.target.value) } : item,
+                      ),
+                    )
+                  }
+                  required
+                />
+              </label>
             </div>
-            <textarea
-              rows={2}
-              value={criterion.description ?? ""}
-              placeholder="Описание критерия"
-              onChange={(event) =>
-                setCriteria((current) =>
-                  current.map((item, itemIndex) =>
-                    index === itemIndex ? { ...item, description: event.target.value } : item,
-                  ),
-                )
-              }
-            />
+            <label className="block">
+              <span className="field-label">Описание критерия</span>
+              <textarea
+                rows={2}
+                value={criterion.description ?? ""}
+                placeholder="Описание критерия"
+                onChange={(event) =>
+                  setCriteria((current) =>
+                    current.map((item, itemIndex) =>
+                      index === itemIndex ? { ...item, description: event.target.value } : item,
+                    ),
+                  )
+                }
+              />
+            </label>
+            <button
+              type="button"
+              className="rounded-full border border-red-500/20 bg-red-500/10 px-3 py-1 text-sm font-medium text-red-600 transition hover:bg-red-500/20"
+              disabled={criteria.length <= 1}
+              onClick={() => setCriteria((current) => current.filter((_, itemIndex) => itemIndex !== index))}
+            >
+              Удалить этот критерий
+            </button>
           </div>
         ))}
+        <button
+          type="button"
+          className="rounded-lg border border-accent bg-transparent px-3 py-2 text-base font-medium text-accent transition hover:bg-accent/5"
+          onClick={() =>
+            setCriteria((current) => [...current, { title: "", max_score: 1, description: "" }])
+          }
+        >
+          + Добавить критерий
+        </button>
       </div>
       <div className="sm:col-span-2 space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <span className="field-label mb-0">Ревьюеры этого ДЗ</span>
           <button
             type="button"
-            className="text-xs font-medium text-accent hover:underline"
+            className="rounded-lg border border-accent bg-transparent px-3 py-2 text-base font-medium text-accent transition hover:bg-accent/5"
             disabled={!courseReviewers.data?.length}
             onClick={() =>
               setSelectedReviewerIds((courseReviewers.data ?? []).map((item) => item.user_id))
@@ -434,7 +482,7 @@ function CreateHomeworkForm({
         </p>
       )}
       <div className="flex flex-wrap gap-2 sm:col-span-2">
-        <button className="button-primary" disabled={create.isPending || criteriaInvalid}>
+        <button className="button-primary" disabled={create.isPending}>
           {create.isPending ? "Сохраняем…" : "Сохранить задание"}
         </button>
         <button type="button" className="button-secondary" onClick={onCancel}>
@@ -550,7 +598,10 @@ function CourseReviewersPanel({
             ))}
           </select>
         </label>
-        <button className="button-primary" disabled={!selectedId || add.isPending}>
+        <button
+          className="rounded-lg border border-accent bg-transparent px-3 py-2 text-base font-medium text-accent transition hover:bg-accent/5"
+          disabled={!selectedId || add.isPending}
+        >
           {add.isPending ? "Добавляем…" : "Добавить ревьюера"}
         </button>
       </form>

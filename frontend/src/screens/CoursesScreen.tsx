@@ -168,6 +168,7 @@ function CreateCourseForm({
         <span className="field-label">Поток</span>
         <input
           type="number"
+          step="any"
           min={1}
           max={99}
           value={form.stream}
@@ -179,6 +180,7 @@ function CreateCourseForm({
         <span className="field-label">Год запуска</span>
         <input
           type="number"
+          step="any"
           min={2000}
           max={2100}
           value={form.year}
@@ -200,6 +202,7 @@ function CreateCourseForm({
         <span className="field-label">Студентов</span>
         <input
           type="number"
+          step="any"
           min={0}
           value={form.students_count}
           onChange={(event) => setForm((current) => ({ ...current, students_count: Number(event.target.value) }))}
@@ -209,6 +212,7 @@ function CreateCourseForm({
         <span className="field-label">Количество мест</span>
         <input
           type="number"
+          step="any"
           min={1}
           value={form.capacity}
           onChange={(event) =>
@@ -302,7 +306,7 @@ function CourseGrid({
               <div className="border-t border-border px-4 py-3">
                 <button
                   type="button"
-                  className="text-xs font-medium text-accent hover:underline"
+                  className="rounded-lg border border-accent bg-transparent px-3 py-2 text-base font-medium text-accent transition hover:bg-accent/5"
                   onClick={() => void courseApi.exportXlsx(course.id)}
                 >
                   Скачать XLSX

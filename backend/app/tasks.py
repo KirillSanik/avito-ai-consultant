@@ -6,6 +6,7 @@ from pathlib import Path
 
 from aiogram import Bot
 from celery import Celery
+from sqlalchemy import select, update
 from .database import SessionLocal
 from .models import Evaluation, Submission
 from .services.contracts import TaskRubric
@@ -72,10 +73,50 @@ def evaluate_submission_task(submission_id: int) -> dict[str, object]:
     evaluation = None
     submission = None
     try:
-        submission = db.get(Submission, submission_id)
+        submission = db.scalar(
+            select(Submission).where(Submission.id == submission_id).with_for_update()
+        )
         if submission is None:
             db.rollback()
             return {"status": "missing", "submission_id": submission_id}
+        existing_evaluation = db.scalar(
+            select(Evaluation)
+            .where(Evaluation.submission_id == submission.id)
+            .order_by(Evaluation.created_at.desc(), Evaluation.id.desc())
+        )
+        if existing_evaluation is not None:
+            logger.info(
+                "evaluation.task.skipped_existing submission_id=%s evaluation_id=%s status=%s",
+                submission.id,
+                existing_evaluation.id,
+                existing_evaluation.status,
+            )
+            db.rollback()
+            return {
+                "status": existing_evaluation.status,
+                "submission_id": submission_id,
+                "evaluation_id": existing_evaluation.id,
+            }
+        if submission.evaluation_status != "queued":
+            logger.info(
+                "evaluation.task.skipped_not_queued submission_id=%s status=%s",
+                submission.id,
+                submission.evaluation_status,
+            )
+            db.rollback()
+            return {"status": submission.evaluation_status, "submission_id": submission_id}
+        claim = db.execute(
+            update(Submission)
+            .where(
+                Submission.id == submission.id,
+                Submission.evaluation_status == "queued",
+            )
+            .values(evaluation_status="processing")
+        )
+        if claim.rowcount != 1:
+            db.rollback()
+            return {"status": "skipped", "submission_id": submission_id}
+        db.refresh(submission)
         assignment = submission.assignment
         if assignment is None:
             submission.evaluation_status = "failed"
@@ -87,7 +128,6 @@ def evaluate_submission_task(submission_id: int) -> dict[str, object]:
             status="processing",
         )
         db.add(evaluation)
-        submission.evaluation_status = "processing"
         db.commit()
         db.refresh(evaluation)
         logger.info("evaluation.status.processing submission_id=%s evaluation_id=%s", submission.id, evaluation.id)
@@ -111,7 +151,15 @@ def evaluate_submission_task(submission_id: int) -> dict[str, object]:
             source = submission.source_file_path if source_type == "file" else submission.work_url
             if not source:
                 raise ValueError("submission source is missing")
-            result = asyncio.run(EvaluationPipeline().run(str(submission.id), source_type, source, rubric))
+            result = asyncio.run(
+                EvaluationPipeline().run(
+                    str(submission.id),
+                    source_type,
+                    source,
+                    rubric,
+                    submission.source_text,
+                )
+            )
             report_path = Path(os.getenv("STORAGE_DIR", "./storage")) / "reports" / f"submission-{submission.id}-evaluation-{evaluation.id}.pdf"
             generate_review_pdf(result.evaluation, rubric, result.ai_assessment, report_path)
             evaluation.review_json = result.evaluation.model_dump(mode="json")

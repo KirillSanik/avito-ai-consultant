@@ -40,6 +40,8 @@ REQUIRED_COLUMNS: dict[str, tuple[tuple[str, str], ...]] = {
         ("criterion_scores", "JSON"),
         ("source_type", "VARCHAR(30) DEFAULT 'url'"),
         ("source_file_path", "VARCHAR(1024)"),
+        ("source_filename", "VARCHAR(255)"),
+        ("source_text", "TEXT"),
         ("evaluation_status", "VARCHAR(30) DEFAULT 'not_requested'"),
         ("latest_evaluation_id", "INTEGER"),
     ),

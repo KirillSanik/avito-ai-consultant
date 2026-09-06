@@ -3,6 +3,7 @@
 import type { ReactNode } from "react";
 
 import type { Role } from "@/lib/types";
+import { apiBaseUrl } from "@/lib/api";
 
 
 export function Logo({ compact = false }: { compact?: boolean }) {
@@ -81,23 +82,17 @@ export function AppHeader({
 export function ProgressBar({
   value,
   total,
-  tone = "accent",
 }: {
   value: number;
   total: number;
   tone?: "accent" | "success" | "warning" | "danger";
 }) {
   const percent = total > 0 ? Math.min(100, Math.round((value / total) * 100)) : 0;
-  const colors = {
-    accent: "bg-accent",
-    success: "bg-success",
-    warning: "bg-warning",
-    danger: "bg-danger",
-  };
+  const color = percent < 20 ? "bg-red-500" : percent < 80 ? "bg-amber-400" : "bg-emerald-500";
   return (
     <div className="flex items-center gap-3">
       <div className="h-2 flex-1 overflow-hidden rounded-full bg-background">
-        <div className={`h-full rounded-full transition-all ${colors[tone]}`} style={{ width: `${percent}%` }} />
+        <div className={`h-full rounded-full transition-all ${color}`} style={{ width: `${percent}%` }} />
       </div>
       <span className="w-9 text-right font-mono text-xs text-muted">{percent}%</span>
     </div>
@@ -122,15 +117,18 @@ export function ExternalLink({ href, children }: { href: string; children: React
 
 export function ResourceLinks({
   taskUrl,
+  taskFileUrl,
   criteriaUrl,
 }: {
   taskUrl: string;
+  taskFileUrl?: string | null;
   criteriaUrl?: string | null;
 }) {
   const criteria = criteriaUrl?.trim();
+  const taskHref = taskFileUrl ? `${apiBaseUrl()}${taskFileUrl}` : taskUrl;
   return (
     <div className="flex flex-wrap gap-3">
-      <ExternalLink href={taskUrl}>Условия задания</ExternalLink>
+      {taskHref ? <ExternalLink href={taskHref}>Условия задания</ExternalLink> : null}
       {criteria ? <ExternalLink href={criteria}>Критерии (подробно)</ExternalLink> : null}
     </div>
   );

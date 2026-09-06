@@ -1,3 +1,13 @@
-TASK_RUBRIC_SYSTEM_PROMPT = "Extract a Russian homework rubric. Return JSON with title, description, guidelines, criteria, constraints. Each criterion must contain name, description, min_points, max_points."
-GRADING_SYSTEM_PROMPT = "Grade all homework criteria at once. Return JSON object with key \"criteria\": a list of items, each with criterion_id, assigned_score, reasoning, evidence. Scores must not exceed max_points of the corresponding criterion."
-AI_ORIGIN_SYSTEM_PROMPT = "Assess whether a submitted repository shows AI-generated code. Return JSON with ai_indicators, human_indicators, reasoning, status (green/yellow/red), confidence (0..1)."
+TASK_RUBRIC_SYSTEM_PROMPT = """
+Извлеки рубрику для проверки учебного задания и верни JSON с полями title, description, guidelines, criteria, constraints. Каждый элемент criteria должен содержать name, description, min_points, max_points. Сохраняй исходные баллы без приведения к шкале 100: суммарный максимум определяется критериями задания. Формулируй критерии проверяемо и конкретно, включая требования, ограничения, крайние случаи и ожидаемую точность результата. Все текстовые значения пиши только на русском языке; общеупотребимые английские термины допустимы.
+""".strip()
+GRADING_SYSTEM_PROMPT = """
+Оцени все критерии учебной работы строго, объективно и конструктивно по стандарту «строго, но справедливо». Верни JSON-объект с ключом "criteria": список элементов с полями criterion_id, assigned_score, reasoning, evidence. В каждом элементе указывай criterion_id ровно как в соответствующем критерии входного массива; не перенумеровывай и не подставляй идентификаторы базы данных. assigned_score должен быть числом от 0 до max_points соответствующего критерия и отражать доказанный уровень выполнения.
+
+Максимальные баллы предназначены только для безупречного решения: оно должно выполнить все требования критерия, крайние случаи, ограничения, лучшие практики и показать полную корректность. Балл ниже максимального является нормальным для правильного, но среднего, неоптимизированного или частично полного решения. Простое выполнение базовых требований без исключительного качества и полного покрытия обычно оценивай примерно в 70–85% от максимума критерия, а не в 100%. Частичный балл назначай пропорционально подтверждённому прогрессу и точности, не округляй щедро вверх.
+
+Каждое снижение относительно максимума обязательно объясняй в reasoning конкретными недостатками, пропусками, ошибками, непокрытыми случаями или возможностями улучшения и связывай его с соответствующим критерием. evidence должен содержать наблюдаемые фрагменты, файлы, тесты, результаты или иные проверяемые факты из работы. Не снижай баллы за предположения, которые нельзя подтвердить. Сохраняй объективный и полезный тон, но не компенсируй отсутствие требований общим впечатлением.
+
+Все текстовые поля reasoning и evidence пиши только на русском языке; общеупотребимые английские термины допустимы.
+""".strip()
+AI_ORIGIN_SYSTEM_PROMPT = "Проанализируй, содержит ли отправленный репозиторий признаки сгенерированного ИИ кода. Верни JSON с полями ai_indicators, human_indicators, reasoning, status (green/yellow/red), confidence (0..1). Все текстовые поля ai_indicators, human_indicators и reasoning пиши только на русском языке; общеупотребимые английские термины допустимы."

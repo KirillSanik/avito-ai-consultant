@@ -21,6 +21,15 @@ input, textarea, select {
   padding: 0.625rem 0.875rem;
   color: #111827;
 }
+input[type="number"] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+input[type="number"]::-webkit-outer-spin-button,
+input[type="number"]::-webkit-inner-spin-button {
+  display: none;
+  margin: 0;
+}
 input:focus-visible, textarea:focus-visible, select:focus-visible,
 button:focus-visible, a:focus-visible {
   outline: none;

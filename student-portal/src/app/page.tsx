@@ -10,6 +10,7 @@ import {
   studentAuthApi,
   studentCourseApi,
   studentHomeworkApi,
+  apiBaseUrl,
 } from "@/lib/api";
 import type {
   AuthResponse,
@@ -456,7 +457,7 @@ function CourseScreen({
                         </div>
                         <span className="text-xs font-medium text-accent">
                           {homework.submission?.status === "reviewed"
-                            ? `${homework.submission.score ?? 0} баллов`
+                            ? `${homework.submission.score ?? "-"} баллов`
                             : homework.submission
                               ? "Отправлено"
                               : "Не отправлено"}
@@ -490,10 +491,15 @@ function HomeworkScreen({
     queryFn: () => studentHomeworkApi.get(assignmentId),
   });
   const [workUrl, setWorkUrl] = useState("");
+  const [workFile, setWorkFile] = useState<File | null>(null);
+  const [fileError, setFileError] = useState("");
   const submit = useMutation({
-    mutationFn: () => studentHomeworkApi.submit(assignmentId, workUrl),
+    mutationFn: () => workFile
+      ? studentHomeworkApi.submitFile(assignmentId, workFile)
+      : studentHomeworkApi.submit(assignmentId, workUrl),
     onSuccess: async () => {
       setWorkUrl("");
+      setWorkFile(null);
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["student-homework", assignmentId] }),
         queryClient.invalidateQueries({ queryKey: ["student-course"] }),
@@ -520,16 +526,18 @@ function HomeworkScreen({
               <p className="mt-2 text-sm text-muted">
                 Дедлайн: {new Date(homework.data.deadline).toLocaleString("ru-RU")}
               </p>
-              <div className="mt-5 flex gap-3">
-                <a
+              {(homework.data.task_file_url || homework.data.task_url) && (
+                <div className="mt-5 flex gap-3">
+                  <a
                   className="button-primary"
-                  href={homework.data.task_url}
+                  href={homework.data.task_file_url ? `${apiBaseUrl()}${homework.data.task_file_url}` : homework.data.task_url}
                   target="_blank"
                   rel="noopener noreferrer"
                 >
                   Открыть условие
                 </a>
-              </div>
+                </div>
+              )}
             </section>
             <section className="card p-6">
               <h2 className="text-sm font-semibold">Отправить работу на проверку</h2>
@@ -541,14 +549,18 @@ function HomeworkScreen({
                       ? ` · ${homework.data.submission.score} баллов`
                       : ""}
                   </p>
-                  <a
-                    href={homework.data.submission.work_url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="mt-1 block truncate text-xs text-accent hover:underline"
-                  >
-                    {homework.data.submission.work_url}
-                  </a>
+                  {homework.data.submission.work_url ? (
+                    <a
+                      href={homework.data.submission.work_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="mt-1 block truncate text-xs text-accent hover:underline"
+                    >
+                      {homework.data.submission.work_url}
+                    </a>
+                  ) : (
+                    <p className="mt-1 text-xs text-muted">📄 {homework.data.submission.source_filename ?? "Загруженный файл"}</p>
+                  )}
                   {homework.data.submission.summary && (
                     <p className="mt-2 text-xs text-muted">
                       {homework.data.submission.summary}
@@ -561,27 +573,64 @@ function HomeworkScreen({
               )}
               {!homework.data.submission && (
                 <form
-                  className="mt-4 flex flex-wrap items-end gap-3"
+                  className="mt-4 space-y-3"
                   onSubmit={(event) => {
                     event.preventDefault();
+                    if (!workFile && !workUrl.trim()) {
+                      setFileError("Добавьте ссылку или файл работы");
+                      return;
+                    }
+                    setFileError("");
                     submit.mutate();
                   }}
                 >
                   <label className="min-w-[260px] flex-1">
-                    <span className="field-label">Ссылка GitHub или Google Drive</span>
+                    <span className="field-label">Ссылка GitHub или Google Drive (если не загружаете файл)</span>
                     <input
                       type="url"
-                      required
                       value={workUrl}
                       placeholder="https://github.com/..."
-                      onChange={(event) => setWorkUrl(event.target.value)}
+                      onChange={(event) => {
+                        setWorkUrl(event.target.value);
+                        if (event.target.value) setWorkFile(null);
+                      }}
                     />
                   </label>
+                  <div className="rounded-lg border border-dashed border-accent/50 bg-secondary p-3">
+                    <span className="field-label">Или загрузите PDF, DOCX или XLSX</span>
+                    <input
+                      type="file"
+                      accept=".pdf,.docx,.xlsx"
+                      onChange={(event) => {
+                        const file = event.target.files?.[0] ?? null;
+                        if (!file) return;
+                        const extension = file.name.split(".").pop()?.toLowerCase();
+                        if (!extension || !["pdf", "docx", "xlsx"].includes(extension)) {
+                          setFileError("Поддерживаются только PDF, DOCX и XLSX");
+                          return;
+                        }
+                        if (file.size > 20 * 1024 * 1024) {
+                          setFileError("Размер файла не должен превышать 20 МБ");
+                          return;
+                        }
+                        setFileError("");
+                        setWorkFile(file);
+                        setWorkUrl("");
+                      }}
+                    />
+                    {workFile && (
+                      <div className="mt-2 flex items-center justify-between gap-3 text-xs text-muted">
+                        <span>📄 {workFile.name} · {(workFile.size / 1024 / 1024).toFixed(1)} МБ</span>
+                        <button type="button" className="text-accent hover:underline" onClick={() => setWorkFile(null)}>Удалить файл</button>
+                      </div>
+                    )}
+                  </div>
                   <button className="button-primary" disabled={submit.isPending}>
                     {submit.isPending ? "Отправляем…" : "Отправить на проверку"}
                   </button>
                 </form>
               )}
+              {fileError && <p className="mt-3 text-xs text-danger">{fileError}</p>}
               {submit.error && <div className="mt-3"><ErrorMessage error={submit.error} /></div>}
               {submit.isSuccess && (
                 <p className="mt-3 text-xs text-success">Работа отправлена</p>

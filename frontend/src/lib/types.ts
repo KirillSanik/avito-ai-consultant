@@ -145,6 +145,7 @@ export type Submission = {
   } | null;
   source_type?: string;
   source_file_path?: string | null;
+  source_filename?: string | null;
   evaluation_status?: "not_requested" | "queued" | "processing" | "completed" | "failed" | "stale";
   latest_evaluation_id?: number | null;
   review_json?: EvaluationReport | null;
@@ -174,6 +175,7 @@ export type Assignment = {
   rubric_status?: string;
   rubric_json?: Record<string, unknown> | null;
   task_text?: string | null;
+  task_file_url?: string | null;
 };
 
 export type Reviewer = {

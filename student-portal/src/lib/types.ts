@@ -18,6 +18,8 @@ export type StudentSubmission = {
   status: string;
   score: number | null;
   summary: string | null;
+  source_type: string;
+  source_filename: string | null;
 };
 
 export type StudentAssignment = {
@@ -26,6 +28,7 @@ export type StudentAssignment = {
   number: number;
   deadline: string;
   task_url: string;
+  task_file_url: string | null;
   submission: StudentSubmission | null;
 };
 

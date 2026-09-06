@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Literal
 from urllib.parse import urlparse
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 Role = Literal["reviewer", "methodist", "student"]
@@ -87,24 +87,18 @@ class CourseReviewerOut(BaseModel):
 
 class Criterion(BaseModel):
     title: str = Field(min_length=2, max_length=200)
-    max_score: int = Field(ge=0, le=100)
+    max_score: int = Field(ge=0)
     description: str = Field(default="", max_length=2000)
-
-
-def ensure_criteria_total(criteria: list[Criterion]) -> None:
-    total = sum(item.max_score for item in criteria)
-    if total != 100:
-        raise ValueError("Сумма баллов критериев должна быть ровно 100")
 
 
 class AssignmentCreate(BaseModel):
     title: str = Field(min_length=2, max_length=200)
     deadline: datetime
-    task_url: str = Field(min_length=8, max_length=500)
+    task_url: str = Field(default="", max_length=500)
     criteria_url: str = Field(default="", max_length=500)
     number: int | None = Field(default=None, ge=1)
     criteria: list[Criterion] = Field(
-        default_factory=lambda: [Criterion(title="Качество работы", max_score=100, description="")],
+        default_factory=lambda: [Criterion(title="Качество работы", max_score=1, description="")],
         min_length=1,
     )
     reviewer_guide: str = Field(
@@ -113,12 +107,6 @@ class AssignmentCreate(BaseModel):
         max_length=5000,
     )
     reviewer_user_ids: list[int] = Field(default_factory=list)
-
-    @model_validator(mode="after")
-    def validate_criteria_total(self) -> "AssignmentCreate":
-        ensure_criteria_total(self.criteria)
-        return self
-
 
 class AssignmentListOut(BaseModel):
     id: int
@@ -150,6 +138,7 @@ class SubmissionOut(BaseModel):
     reviewer_user_id: int | None
     source_type: str = "url"
     source_file_path: str | None = None
+    source_filename: str | None = None
     evaluation_status: str = "not_requested"
     latest_evaluation_id: int | None = None
     review_json: dict | None = None
@@ -171,6 +160,7 @@ class AssignmentOut(BaseModel):
     reviewer_guide: str
     submissions: list[SubmissionOut]
     task_file_path: str | None = None
+    task_file_url: str | None = None
     rubric_json: dict | None = None
     task_text: str | None = None
     rubric_status: str = "not_requested"
@@ -179,7 +169,7 @@ class AssignmentOut(BaseModel):
 
 class CriterionScoreInput(BaseModel):
     criterion_index: int = Field(ge=0)
-    score: int = Field(ge=0, le=100)
+    score: int = Field(ge=0)
     comment: str = Field(default="", max_length=2000)
 
 
@@ -192,11 +182,6 @@ class ReviewUpdate(BaseModel):
 class CriteriaUpdate(BaseModel):
     criteria: list[Criterion] = Field(min_length=1)
     reviewer_guide: str = Field(min_length=3, max_length=5000)
-
-    @model_validator(mode="after")
-    def validate_criteria_total(self) -> "CriteriaUpdate":
-        ensure_criteria_total(self.criteria)
-        return self
 
 
 class ClarificationCreate(BaseModel):
@@ -273,6 +258,8 @@ class StudentSubmissionOut(BaseModel):
     status: str
     score: int | None
     summary: str | None
+    source_type: str = "url"
+    source_filename: str | None = None
 
 
 class StudentAssignmentOut(BaseModel):
@@ -281,6 +268,7 @@ class StudentAssignmentOut(BaseModel):
     number: int
     deadline: datetime
     task_url: str
+    task_file_url: str | None = None
     submission: StudentSubmissionOut | None = None
 
 

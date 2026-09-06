@@ -12,7 +12,7 @@ os.environ["DATABASE_URL"] = f"sqlite:///{test_db_path}"
 
 from app.database import Base, SessionLocal, engine, ensure_schema
 from app.main import app, seed_demo_data
-from app.models import AuthToken, Course, Submission, User
+from app.models import AuthToken, Course, Evaluation, Submission, User
 
 
 @pytest.fixture()
@@ -330,8 +330,7 @@ def test_main_reviewer_flow(client: TestClient) -> None:
     draft = client.post(
         f"/api/submissions/{submission_id}/ai-draft", headers=headers
     )
-    assert draft.status_code == 200
-    assert draft.json()["ai_draft"]["total"] > 0
+    assert draft.status_code == 409
 
     too_high = list(item["max_score"] for item in body["criteria"])
     too_high[0] = too_high[0] + 1
@@ -351,11 +350,39 @@ def test_main_reviewer_flow(client: TestClient) -> None:
     assert review.json()["score"] == 39
     assert len(review.json()["criterion_scores"]) == 4
 
-    report = client.get(
-        f"/api/submissions/{submission_id}/report.pdf", headers=headers
+
+def test_ai_draft_returns_existing_evaluation_without_dispatch(client: TestClient) -> None:
+    headers = _auth_headers(client, "reviewer", "reviewer")
+    course_id = client.get(
+        "/api/courses", params={"active": "true"}, headers=headers
+    ).json()[0]["id"]
+    assignment_id = client.get(
+        f"/api/courses/{course_id}/assignments", headers=headers
+    ).json()[0]["id"]
+    submission_id = client.get(
+        f"/api/assignments/{assignment_id}", headers=headers
+    ).json()["submissions"][0]["id"]
+    with SessionLocal() as db:
+        submission = db.get(Submission, submission_id)
+        assert submission is not None
+        evaluation = Evaluation(
+            submission_id=submission.id,
+            status="completed",
+            review_json={"total_score": 10, "criterion_results": []},
+        )
+        db.add(evaluation)
+        db.flush()
+        evaluation_id = evaluation.id
+        submission.latest_evaluation_id = evaluation_id
+        submission.evaluation_status = "completed"
+        db.commit()
+
+    response = client.post(
+        f"/api/submissions/{submission_id}/ai-draft", headers=headers
     )
-    assert report.status_code == 200
-    assert report.headers["content-type"] == "application/pdf"
+    assert response.status_code == 200
+    assert response.json()["latest_evaluation_id"] == evaluation_id
+    assert response.json()["evaluation_status"] == "completed"
 
 
 def test_reviewer_management_and_clarification_patch(client: TestClient) -> None:
@@ -698,7 +725,7 @@ def test_methodist_can_create_homework_reviewer_cannot(client: TestClient) -> No
     assert overflow_update.status_code == 422
 
 
-def test_criteria_must_total_exactly_100(client: TestClient) -> None:
+def test_criteria_accept_arbitrary_total(client: TestClient) -> None:
     methodist = _auth_headers(client, "methodist", "methodist")
     reviewer = _auth_headers(client, "reviewer", "reviewer")
     course_id = client.get("/api/courses", headers=methodist).json()[0]["id"]
@@ -722,11 +749,11 @@ def test_criteria_must_total_exactly_100(client: TestClient) -> None:
             },
         )
 
-    assert update(99).status_code == 422
-    assert update(101).status_code == 422
-    assert update(100).status_code == 200
-    assert update(100, reviewer).status_code == 403
-    assert update(100, None).status_code == 401
+    assert update(99).status_code == 200
+    assert update(101).status_code == 200
+    assert update(200).status_code == 200
+    assert update(200, reviewer).status_code == 403
+    assert update(200, None).status_code == 401
 
 
 def test_reviewer_only_sees_assigned_homeworks_and_bulk_add(

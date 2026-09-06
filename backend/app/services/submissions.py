@@ -5,7 +5,7 @@ import openpyxl
 import requests
 
 from .contracts import ExcelAudit, LinkInfo, SubmissionData
-from .parsers import extract_task_text
+from .parsers import parse_document
 
 
 class SubmissionParser:
@@ -33,8 +33,16 @@ class SubmissionParser:
             image_count=image_count,
         )
 
-    def parse_file(self, source: Path, submission_id: str, task_id: str) -> SubmissionData:
+    def parse_file(
+        self,
+        source: Path,
+        submission_id: str,
+        task_id: str,
+        extracted_text: str | None = None,
+    ) -> SubmissionData:
         parsed = self._parse_file(source)
+        if extracted_text is not None:
+            parsed["text"] = extracted_text
         audit = self._audit_workbook(source) if source.suffix.lower() == ".xlsx" else None
         return SubmissionData(
             submission_id=submission_id,
@@ -51,8 +59,8 @@ class SubmissionParser:
     def _parse_file(self, source: Path) -> dict:
         suffix = source.suffix.lower()
         if suffix in {".pdf", ".docx", ".xlsx", ".md"}:
-            text = extract_task_text(source)
-            return {"text": text, "tables": [], "image_count": 0}
+            parsed_document = parse_document(source)
+            return {"text": parsed_document.text, "tables": [], "image_count": 0}
         if suffix == ".ipynb":
             return {"text": source.read_text(encoding="utf-8", errors="replace"), "tables": [], "image_count": 0}
         return {"text": source.read_text(encoding="utf-8", errors="replace"), "tables": [], "image_count": 0}
@@ -75,7 +83,7 @@ class SubmissionParser:
         links = []
         for url in dict.fromkeys(re.findall(r"https?://[^\s<>\"]+", text)):
             try:
-                response = requests.get(url, timeout=10, allow_redirects=True)
+                response = requests.get(url, timeout=240, allow_redirects=True)
                 links.append(LinkInfo(url=url, status_code=response.status_code, is_accessible=response.ok, content_summary=response.text[:500], is_google_doc="google" in url))
             except requests.RequestException as exc:
                 links.append(LinkInfo(url=url, status_code=0, is_accessible=False, content_summary=str(exc), is_google_doc="google" in url))

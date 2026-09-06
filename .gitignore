@@ -59,3 +59,13 @@ storage/
 tmp/
 cloned_repos/
 data/
+# Dependencies
+node_modules/
+/.pnp
+.pnp.js
+
+# Next.js build output & cache
+.next/
+out/
+build/
+dist/

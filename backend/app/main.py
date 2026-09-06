@@ -3,13 +3,15 @@ import asyncio
 from datetime import datetime, timezone
 import hashlib
 import hmac
+import json
 import logging
 import os
 from pathlib import Path
 import secrets
 from typing import Literal
 
-from fastapi import Depends, FastAPI, File, Header, HTTPException, Query, UploadFile, status
+from fastapi import Depends, FastAPI, File, Header, HTTPException, Query, Request, UploadFile, status
+from pydantic import ValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response
 from sqlalchemy.exc import IntegrityError
@@ -68,7 +70,12 @@ from .schemas import (
     XlsxImportResult,
 )
 from .services.llm import LLMService
-from .services.parsers import SUPPORTED_TASK_EXTENSIONS, extract_task_text, fallback_rubric
+from .services.parsers import (
+    MAX_UPLOAD_BYTES,
+    SUPPORTED_TASK_EXTENSIONS,
+    fallback_rubric,
+    parse_document,
+)
 from .services.settings import PipelineSettings
 from .tasks import deadline_reminder, evaluate_submission_task
 from .xlsx_io import (
@@ -512,12 +519,17 @@ def student_assignment_out(
         number=assignment.number,
         deadline=assignment.deadline,
         task_url=assignment.task_url,
+        task_file_url=_task_file_url(assignment),
         submission=(
             StudentSubmissionOut.model_validate(submission, from_attributes=True)
             if submission
             else None
         ),
     )
+
+
+def _task_file_url(assignment: Assignment) -> str | None:
+    return f"/api/assignments/{assignment.id}/task-file" if assignment.task_file_path else None
 
 
 def student_course_out(
@@ -833,9 +845,74 @@ def submit_student_work(
 ) -> StudentSubmissionOut:
     assignment = get_assignment_or_404(assignment_id, db)
     require_student_enrollment(assignment.course_id, student, db)
+    source_type = "github" if "github.com" in payload.work_url.lower() else "url"
+    return _create_student_submission(
+        assignment,
+        student,
+        payload.work_url,
+        source_type,
+        db,
+    )
+
+
+@app.post(
+    "/api/student/assignments/{assignment_id}/submit-file",
+    response_model=StudentSubmissionOut,
+)
+def submit_student_file(
+    assignment_id: int,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    student: User = Depends(require_student),
+) -> StudentSubmissionOut:
+    assignment = get_assignment_or_404(assignment_id, db)
+    require_student_enrollment(assignment.course_id, student, db)
+    filename = Path(file.filename or "").name
+    suffix = Path(filename).suffix.lower()
+    if suffix not in SUPPORTED_TASK_EXTENSIONS - {".md"}:
+        raise HTTPException(status_code=422, detail="Поддерживаются PDF, DOCX и XLSX")
+    content = file.file.read()
+    if not content:
+        raise HTTPException(status_code=422, detail="Файл работы пуст")
+    if len(content) > MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=422, detail="Размер файла не должен превышать 20 МБ")
+    try:
+        parsed_document = parse_document(content, filename)
+    except Exception as exc:
+        raise HTTPException(status_code=422, detail=f"Не удалось разобрать файл: {exc}") from exc
+    storage = Path(os.getenv("STORAGE_DIR", "./storage")) / "submissions"
+    storage.mkdir(parents=True, exist_ok=True)
+    destination = storage / f"student-{student.id}-assignment-{assignment.id}{suffix}"
+    destination.write_bytes(content)
+    try:
+        return _create_student_submission(
+            assignment,
+            student,
+            "",
+            "file",
+            db,
+            source_file_path=str(destination),
+            source_filename=filename,
+            source_text=parsed_document.text,
+        )
+    except Exception:
+        destination.unlink(missing_ok=True)
+        raise
+
+
+def _create_student_submission(
+    assignment: Assignment,
+    student: User,
+    work_url: str,
+    source_type: str,
+    db: Session,
+    source_file_path: str | None = None,
+    source_filename: str | None = None,
+    source_text: str | None = None,
+) -> StudentSubmissionOut:
     submission = db.scalar(
         select(Submission).where(
-            Submission.assignment_id == assignment_id,
+            Submission.assignment_id == assignment.id,
             Submission.student_user_id == student.id,
         )
     )
@@ -844,20 +921,22 @@ def submit_student_work(
             status_code=status.HTTP_409_CONFLICT,
             detail="Работа уже отправлена; повторная отправка недоступна",
         )
-    source_type = "github" if "github.com" in payload.work_url.lower() else "url"
     submission = Submission(
-        assignment_id=assignment_id,
+        assignment_id=assignment.id,
         student_user_id=student.id,
         student_name=reviewer_name(student),
-        work_url=payload.work_url,
+        work_url=work_url,
         stepik_url="",
         status="pending",
         source_type=source_type,
+        source_file_path=source_file_path,
+        source_filename=source_filename,
+        source_text=source_text,
         evaluation_status="queued",
     )
     db.add(submission)
     db.flush()
-    assign_new_submission(submission, assignment_id, db)
+    assign_new_submission(submission, assignment.id, db)
     db.commit()
     db.refresh(submission)
     try:
@@ -1118,12 +1197,15 @@ def update_course(
     response_model=AssignmentListOut,
     status_code=status.HTTP_201_CREATED,
 )
-def create_assignment(
+async def create_assignment(
     course_id: int,
-    payload: AssignmentCreate,
+    request: Request,
     db: Session = Depends(get_db),
     _: User = Depends(require_methodist),
 ) -> AssignmentListOut:
+    payload, task_file = await _assignment_create_payload(request)
+    if not payload.task_url.strip() and task_file is None:
+        raise HTTPException(status_code=422, detail="Добавьте ссылку на задание или файл условия")
     get_course_or_404(course_id, db)
     next_number = db.scalar(
         select(func.max(Assignment.number)).where(Assignment.course_id == course_id)
@@ -1143,9 +1225,12 @@ def create_assignment(
     )
     db.add(assignment)
     db.flush()
-    assignment.rubric_json = fallback_rubric(
-        str(assignment.id), assignment.title, assignment.task_text, assignment.criteria
-    ).model_dump(mode="json")
+    if task_file is not None:
+        _attach_task_file(assignment, task_file)
+    else:
+        assignment.rubric_json = fallback_rubric(
+            str(assignment.id), assignment.title, assignment.task_text, assignment.criteria
+        ).model_dump(mode="json")
     logger.info("task.rubric.persisted assignment_id=%s status=fallback trigger=assignment_create", assignment.id)
     for user_id in dict.fromkeys(payload.reviewer_user_ids):
         attach_homework_reviewer(assignment, user_id, db)
@@ -1166,6 +1251,57 @@ def create_assignment(
     )
 
 
+async def _assignment_create_payload(request: Request) -> tuple[AssignmentCreate, UploadFile | None]:
+    if "multipart/form-data" not in request.headers.get("content-type", ""):
+        try:
+            return AssignmentCreate.model_validate(await request.json()), None
+        except ValidationError as exc:
+            raise HTTPException(status_code=422, detail=exc.errors()) from exc
+    form = await request.form()
+    try:
+        payload = AssignmentCreate.model_validate(
+            {
+                "title": form.get("title", ""),
+                "deadline": form.get("deadline", ""),
+                "task_url": form.get("task_url", ""),
+                "criteria_url": form.get("criteria_url", ""),
+                "number": form.get("number") or None,
+                "criteria": json.loads(str(form.get("criteria", "[]"))),
+                "reviewer_guide": form.get("reviewer_guide", ""),
+                "reviewer_user_ids": json.loads(str(form.get("reviewer_user_ids", "[]"))),
+            }
+        )
+    except (TypeError, ValueError, ValidationError) as exc:
+        raise HTTPException(status_code=422, detail="Некорректные данные задания") from exc
+    file = form.get("file")
+    return payload, file if hasattr(file, "filename") and hasattr(file, "file") else None
+
+
+def _attach_task_file(assignment: Assignment, file: UploadFile) -> None:
+    suffix = Path(file.filename or "").suffix.lower()
+    if suffix not in SUPPORTED_TASK_EXTENSIONS:
+        raise HTTPException(status_code=422, detail="Поддерживаются PDF, DOCX, XLSX и Markdown")
+    content = file.file.read()
+    if not content:
+        raise HTTPException(status_code=422, detail="Файл задания пуст")
+    if len(content) > MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=422, detail="Размер файла не должен превышать 20 МБ")
+    try:
+        parsed_document = parse_document(content, file.filename)
+    except Exception as exc:
+        raise HTTPException(status_code=422, detail=f"Не удалось разобрать задание: {exc}") from exc
+    storage = Path(os.getenv("STORAGE_DIR", "./storage")) / "tasks"
+    storage.mkdir(parents=True, exist_ok=True)
+    destination = storage / f"assignment-{assignment.id}{suffix}"
+    destination.write_bytes(content)
+    assignment.task_file_path = str(destination)
+    assignment.task_text = parsed_document.text
+    assignment.rubric_json = fallback_rubric(
+        str(assignment.id), assignment.title, assignment.task_text, assignment.criteria
+    ).model_dump(mode="json")
+    assignment.rubric_status = "fallback"
+
+
 @app.post("/api/assignments/{assignment_id}/task-file", response_model=AssignmentOut)
 def upload_assignment_task_file(
     assignment_id: int,
@@ -1184,9 +1320,12 @@ def upload_assignment_task_file(
     content = file.file.read()
     if not content:
         raise HTTPException(status_code=422, detail="Файл задания пуст")
+    if len(content) > MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=422, detail="Размер файла не должен превышать 20 МБ")
     destination.write_bytes(content)
     try:
-        task_text = extract_task_text(destination)
+        parsed_document = parse_document(content, file.filename)
+        task_text = parsed_document.text
         fallback = fallback_rubric(str(assignment.id), assignment.title, task_text, assignment.criteria)
         try:
             rubric = asyncio.run(
@@ -1217,7 +1356,7 @@ def upload_assignment_task_file(
             submission.evaluation_status = "stale"
     db.commit()
     db.refresh(assignment)
-    logger.info("task.rubric.persisted assignment_id=%s status=%s criteria_version=%s", assignment.id, assignment.rubric_status, assignment.criteria_version)
+    logger.info("task.rubric.persisted assignment_id=%s status=%s criteria_version=%s metadata=%s", assignment.id, assignment.rubric_status, assignment.criteria_version, parsed_document.metadata)
     return AssignmentOut(
         id=assignment.id,
         course_id=assignment.course_id,
@@ -1230,6 +1369,7 @@ def upload_assignment_task_file(
         reviewer_guide=assignment.reviewer_guide,
         submissions=[SubmissionOut.model_validate(item) for item in assignment.submissions],
         task_file_path=assignment.task_file_path,
+        task_file_url=_task_file_url(assignment),
         rubric_json=assignment.rubric_json,
         task_text=assignment.task_text,
         rubric_status=assignment.rubric_status,
@@ -1339,10 +1479,33 @@ def get_assignment(
         reviewer_guide=assignment.reviewer_guide,
         submissions=[SubmissionOut.model_validate(item) for item in submissions],
         task_file_path=assignment.task_file_path,
+        task_file_url=_task_file_url(assignment),
         rubric_json=assignment.rubric_json,
         task_text=assignment.task_text,
         rubric_status=assignment.rubric_status,
         criteria_version=assignment.criteria_version,
+    )
+
+
+@app.get("/api/assignments/{assignment_id}/task-file")
+def get_assignment_task_file(assignment_id: int, db: Session = Depends(get_db)) -> FileResponse:
+    assignment = db.get(Assignment, assignment_id)
+    if assignment is None or not assignment.task_file_path:
+        raise HTTPException(status_code=404, detail="Файл условия не найден")
+    path = Path(assignment.task_file_path)
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="Файл условия не найден")
+    media_types = {
+        ".pdf": "application/pdf",
+        ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        ".md": "text/markdown; charset=utf-8",
+    }
+    return FileResponse(
+        path,
+        media_type=media_types.get(path.suffix.lower(), "application/octet-stream"),
+        filename=path.name,
+        content_disposition_type="inline",
     )
 
 
@@ -1372,6 +1535,12 @@ def update_criteria(
         criteria=assignment.criteria,
         reviewer_guide=assignment.reviewer_guide,
         submissions=[SubmissionOut.model_validate(item) for item in assignment.submissions],
+        task_file_path=assignment.task_file_path,
+        task_file_url=_task_file_url(assignment),
+        rubric_json=assignment.rubric_json,
+        task_text=assignment.task_text,
+        rubric_status=assignment.rubric_status,
+        criteria_version=assignment.criteria_version,
     )
 
 
@@ -1545,16 +1714,14 @@ def get_submission_detail(
 
 def submission_out_with_evaluation(submission: Submission, db: Session) -> SubmissionOut:
     output = SubmissionOut.model_validate(submission)
-    evaluation_id = submission.latest_evaluation_id
-    evaluation = db.get(Evaluation, evaluation_id) if evaluation_id else None
-    if evaluation is None:
-        evaluation = db.scalar(
-            select(Evaluation)
-            .where(Evaluation.submission_id == submission.id)
-            .order_by(Evaluation.id.desc())
-        )
+    evaluation = db.scalar(
+        select(Evaluation)
+        .where(Evaluation.submission_id == submission.id)
+        .order_by(Evaluation.created_at.desc(), Evaluation.id.desc())
+    )
     if evaluation is not None:
         output.latest_evaluation_id = evaluation.id
+        output.evaluation_status = evaluation.status
         output.review_json = evaluation.review_json
         output.ai_assessment_json = evaluation.ai_assessment_json
         output.pdf_report_path = evaluation.pdf_report_path
@@ -1580,28 +1747,17 @@ def create_ai_draft(
     ):
         raise HTTPException(status_code=403, detail="Submission is assigned to another reviewer")
 
-    if submission.evaluation_status in {"queued", "processing"}:
+    evaluation = db.scalar(
+        select(Evaluation)
+        .where(Evaluation.submission_id == submission.id)
+        .order_by(Evaluation.created_at.desc(), Evaluation.id.desc())
+    )
+    if evaluation is not None or submission.evaluation_status in {"queued", "processing", "completed"}:
         return submission_out_with_evaluation(submission, db)
-    if not submission.work_url and not submission.source_file_path:
-        raise HTTPException(status_code=422, detail="У работы отсутствует источник для AI-проверки")
-    submission.source_type = "file" if submission.source_file_path else "github"
-    submission.evaluation_status = "queued"
-    submission.status = "in_review"
-    submission.reviewer = submission.reviewer or reviewer_name(current_user)
-    submission.reviewer_user_id = submission.reviewer_user_id or current_user.id
-    db.commit()
-    db.refresh(submission)
-    try:
-        evaluate_submission_task.apply_async(args=[submission.id], ignore_result=True, retry=False)
-        logger.info("evaluation.enqueue.accepted submission_id=%s", submission.id)
-    except Exception:
-        submission.evaluation_status = "failed"
-        db.commit()
-        logger.exception("evaluation.enqueue.failed submission_id=%s", submission.id)
-    # В eager-режиме (без Redis) задача уже отработала в этом процессе:
-    # перечитываем запись, чтобы в ответе были результаты, закоммиченные другой сессией.
-    db.refresh(submission)
-    return submission_out_with_evaluation(submission, db)
+    raise HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail="AI-проверка запускается только при отправке работы студентом",
+    )
 
 
 @app.put("/api/submissions/{submission_id}/review", response_model=SubmissionOut)

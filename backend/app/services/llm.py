@@ -3,6 +3,7 @@ import json
 import logging
 
 from openai import AsyncOpenAI
+from pydantic import ValidationError
 
 from .contracts import (
     AIAssessmentResult,
@@ -67,7 +68,7 @@ class LLMService:
             TASK_RUBRIC_SYSTEM_PROMPT,
             json.dumps({"task_id": task_id, "title": title, "text": text[: self.settings.max_input_chars]}, ensure_ascii=False),
         )
-        return TaskRubric.model_validate({
+        rubric_payload = {
             "task_id": task_id,
             "title": payload.get("title") or fallback.title,
             "description": payload.get("description") or fallback.description,
@@ -76,31 +77,78 @@ class LLMService:
             "criteria": payload.get("criteria") or [item.model_dump() for item in fallback.criteria],
             "constraints": _normalize_constraints(payload.get("constraints"), fallback.constraints).model_dump(),
             "total_points": sum(float(item.get("max_points", 0)) for item in payload.get("criteria", [])) or fallback.total_points,
-        })
+        }
+        try:
+            return TaskRubric.model_validate(rubric_payload)
+        except ValidationError as exc:
+            logger.exception("Rubric schema validation failed fields=%s", exc.errors())
+            raise
 
     async def grade_criteria(self, rubric: TaskRubric, submission: SubmissionData) -> list[CriterionResult]:
+        criteria_payload = [
+            {**criterion.model_dump(), "criterion_id": str(index)}
+            for index, criterion in enumerate(rubric.criteria)
+        ]
         payload = await self._json(
             GRADING_SYSTEM_PROMPT,
             json.dumps({
-                "criteria": [item.model_dump() for item in rubric.criteria],
+                "criteria": criteria_payload,
                 "task": rubric.full_instructions[: self.settings.max_input_chars],
                 "submission": submission.model_dump(mode="json"),
             }, ensure_ascii=False),
         )
-        by_id = {str(item.get("criterion_id")): item for item in payload.get("criteria", []) if isinstance(item, dict)}
+        raw_items = payload.get("criteria", []) if isinstance(payload, dict) else []
+        if not isinstance(raw_items, list):
+            logger.error("LLM criteria payload has invalid field criteria: expected list, got %s", type(raw_items).__name__)
+            raw_items = []
+        by_id = {
+            str(item.get("criterion_id")): item
+            for item in raw_items
+            if isinstance(item, dict) and item.get("criterion_id") is not None
+        }
+        response_ids = set(by_id)
+        zero_based_ids = {str(index) for index in range(len(rubric.criteria))}
+        one_based_ids = {str(index + 1) for index in range(len(rubric.criteria))}
+        id_offset = 0 if zero_based_ids.issubset(response_ids) else 1 if one_based_ids.issubset(response_ids) else 0
         results: list[CriterionResult] = []
-        for criterion in rubric.criteria:
-            item = by_id.get(criterion.name, {})
-            score = min(max(float(item.get("assigned_score", 0)), 0), criterion.max_points)
+        for index, criterion in enumerate(rubric.criteria):
+            item = by_id.get(str(index + id_offset), {})
+            if not item:
+                item = by_id.get(criterion.name, {})
+            if not item:
+                logger.warning(
+                    "LLM criterion item missing criterion_index=%s expected_id=%s criterion_name=%s",
+                    index,
+                    index + id_offset,
+                    criterion.name,
+                )
+            raw_score = item.get("assigned_score", 0)
+            try:
+                score = min(max(float(raw_score), 0), criterion.max_points)
+            except (TypeError, ValueError):
+                logger.error(
+                    "LLM criterion field validation failed criterion_index=%s field=assigned_score value=%r",
+                    index,
+                    raw_score,
+                    exc_info=True,
+                )
+                score = 0
             evidence = item.get("evidence", [])
             if isinstance(evidence, str):
                 evidence = [evidence]
+            if not isinstance(evidence, list):
+                logger.error(
+                    "LLM criterion field validation failed criterion_index=%s field=evidence value_type=%s",
+                    index,
+                    type(evidence).__name__,
+                )
+                evidence = []
             results.append(CriterionResult(
-                criterion_id=criterion.name,
+                criterion_id=str(index),
                 criterion_name=criterion.name,
                 assigned_score=score,
                 max_points=criterion.max_points,
-                reasoning=str(item.get("reasoning") or "LLM did not provide reasoning."),
+                reasoning=str(item.get("reasoning") or "Модель не предоставила обоснование."),
                 evidence=[str(e) for e in evidence],
             ))
         return results
@@ -113,7 +161,7 @@ class LLMService:
         return AIAssessmentResult(
             ai_indicators=_normalize_str_list(payload.get("ai_indicators"), []),
             human_indicators=_normalize_str_list(payload.get("human_indicators"), []),
-            reasoning=str(payload.get("reasoning") or "AI-origin assessment unavailable."),
+            reasoning=str(payload.get("reasoning") or "Проверка происхождения кода с помощью ИИ недоступна."),
             status=str(payload.get("status", "yellow")).lower(),
             confidence=min(max(float(payload.get("confidence", 0)), 0), 1),
         )
@@ -134,7 +182,15 @@ class LLMService:
             len(content),
             content[:500],
         )
-        return json.loads(content)
+        try:
+            payload = json.loads(content)
+        except json.JSONDecodeError:
+            logger.exception("LLM response JSON parsing failed content=%s", content[:2000])
+            raise
+        if not isinstance(payload, dict):
+            logger.error("LLM response schema validation failed field=root expected=object got=%s", type(payload).__name__)
+            raise ValueError("LLM response must be a JSON object")
+        return payload
 
 
 async def grade_submission(llm: LLMService, rubric: TaskRubric, submission: SubmissionData):

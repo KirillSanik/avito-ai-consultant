@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { FormEvent, useEffect, useRef, useState } from "react";
+import { FormEvent, useState } from "react";
 
 import { homeworkApi } from "@/lib/api";
 import { activityLogger } from "@/lib/logger";
@@ -21,12 +21,6 @@ export function ReviewerHomework({
   const [clarification, setClarification] = useState("");
   const [showClarification, setShowClarification] = useState(false);
   const [current, setCurrent] = useState<Submission | null>(null);
-  const pollAttempts = useRef(0);
-  const [pollTimedOut, setPollTimedOut] = useState(false);
-  useEffect(() => {
-    pollAttempts.current = 0;
-    setPollTimedOut(false);
-  }, [current?.id]);
   const evaluation = useQuery({
     queryKey: ["submission-evaluation", current?.id],
     queryFn: () => homeworkApi.getSubmission(current!.id),
@@ -34,15 +28,14 @@ export function ReviewerHomework({
     refetchInterval: (query) => {
       const status = query.state.data?.evaluation_status;
       if (status !== "queued" && status !== "processing") return false;
-      pollAttempts.current += 1;
-      if (pollAttempts.current >= 30) {
-        setPollTimedOut(true);
-        return false;
-      }
       return 2000;
     },
   });
-  const activeSubmission = evaluation.data ?? current;
+  const activeSubmission = evaluation.data?.id === current?.id ? evaluation.data : current;
+
+  function selectSubmission(submission: Submission) {
+    setCurrent(submission);
+  }
 
   const checked = assignment.submissions.filter(
     (item) => item.status === "reviewed",
@@ -61,10 +54,10 @@ export function ReviewerHomework({
     mutationFn: async () => {
       const submission = await homeworkApi.next(assignment.id);
       activityLogger.info("reviewer.next_submission", { assignmentId: assignment.id, submissionId: submission.id });
-      return homeworkApi.createDraft(submission.id);
+      return submission;
     },
     onSuccess: (submission) => {
-      setCurrent(submission);
+      selectSubmission(submission);
       onRefresh();
     },
   });
@@ -73,7 +66,7 @@ export function ReviewerHomework({
     <div className="space-y-5">
       <section className="card p-5">
         <div className="flex flex-wrap items-center gap-3">
-          <ResourceLinks taskUrl={assignment.task_url} criteriaUrl={assignment.criteria_url} />
+          <ResourceLinks taskUrl={assignment.task_url} taskFileUrl={assignment.task_file_url} criteriaUrl={assignment.criteria_url} />
           <button
             onClick={() => setShowClarification((value) => !value)}
             className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs font-medium text-warning transition hover:bg-amber-100"
@@ -178,7 +171,7 @@ export function ReviewerHomework({
                     <button
                       className="font-medium text-accent hover:underline"
                       onClick={() => {
-                        void homeworkApi.getSubmission(student.id).then(setCurrent);
+                        void homeworkApi.getSubmission(student.id).then(selectSubmission);
                       }}
                     >
                       Редактировать
@@ -222,7 +215,6 @@ export function ReviewerHomework({
             key={`${activeSubmission.id}-${activeSubmission.evaluation_status}-${activeSubmission.latest_evaluation_id ?? "edit"}`}
             submission={activeSubmission}
             criteria={assignment.criteria}
-            pollTimedOut={pollTimedOut}
             onCancel={() => setCurrent(null)}
             onSaved={async () => {
               setCurrent(null);
@@ -239,13 +231,11 @@ export function ReviewerHomework({
 function ReviewEditor({
   submission,
   criteria,
-  pollTimedOut,
   onCancel,
   onSaved,
 }: {
   submission: Submission;
   criteria: Criterion[];
-  pollTimedOut: boolean;
   onCancel: () => void;
   onSaved: () => Promise<void>;
 }) {
@@ -254,6 +244,7 @@ function ReviewEditor({
     submission.summary ?? submission.ai_draft?.summary ?? submission.review_json?.summary_feedback ?? "",
   );
   const [integrity, setIntegrity] = useState(submission.integrity_flag ?? "");
+  const [scoresEdited, setScoresEdited] = useState(false);
   const [scores, setScores] = useState(() =>
     criteria.map((criterion, index) => {
       const saved = submission.criterion_scores?.find(
@@ -267,16 +258,41 @@ function ReviewEditor({
       );
       return {
         criterion_index: index,
-        score: saved?.score ?? draft?.score ?? structured?.assigned_score ?? 0,
+        score: saved?.score ?? draft?.score ?? structured?.assigned_score ?? "",
         comment: saved?.comment ?? draft?.comment ?? structured?.reasoning ?? "",
       };
     }),
   );
-  const totalScore = scores.reduce((sum, item) => sum + item.score, 0);
+  const scoreFromCriteria = structuredScores.reduce((sum, item) => sum + Number(item.assigned_score || 0), 0);
+  const scoreFromDraft = submission.ai_draft?.scores.reduce((sum, item) => sum + Number(item.score || 0), 0) ?? 0;
+  const persistedScore = structuredScores.length > 0
+    ? scoreFromCriteria
+    : submission.ai_draft?.scores.length
+      ? scoreFromDraft
+      : submission.review_json?.total_score;
+  const totalScore = scoresEdited || submission.criterion_scores?.length
+    ? scores.reduce((sum, item) => sum + Number(item.score || 0), 0)
+    : persistedScore ?? scores.reduce((sum, item) => sum + Number(item.score || 0), 0);
+  const maximumScore = criteria.reduce((sum, criterion) => sum + criterion.max_score, 0);
+  const hasScoreData = Boolean(
+    submission.criterion_scores?.length ||
+    submission.ai_draft?.scores?.length ||
+    structuredScores.length ||
+    submission.review_json?.total_score != null,
+  );
+  const totalDisplay = hasScoreData ? `${totalScore}/${maximumScore}` : "-";
+  const integrityStatus = submission.ai_assessment_json?.status;
+  const evaluationBanner = submission.evaluation_status === "queued" || submission.evaluation_status === "processing"
+    ? { text: "AI-проверка выполняется. Результаты появятся автоматически.", className: "border-white/30 bg-white/15 text-white" }
+    : submission.evaluation_status === "completed"
+      ? { text: "AI-проверка завершена", className: "border-emerald-200 bg-emerald-50 text-emerald-800" }
+      : submission.evaluation_status === "failed"
+        ? { text: "Не удалось выполнить AI-проверку.", className: "border-red-200 bg-red-50 text-red-800" }
+        : null;
   const save = useMutation({
     mutationFn: () =>
       homeworkApi.saveReview(submission.id, {
-        criterion_scores: scores,
+        criterion_scores: scores.map((item) => ({ ...item, score: Number(item.score || 0) })),
         summary,
         integrity_flag: integrity.trim() || null,
       }),
@@ -300,65 +316,33 @@ function ReviewEditor({
           <a href={submission.stepik_url} target="_blank" rel="noreferrer" className="underline">Stepik ↗</a>
           <a href={submission.work_url} target="_blank" rel="noreferrer" className="underline">Открыть работу ↗</a>
         </div>
+        {evaluationBanner && (
+          <div className={`mt-4 rounded-lg border px-3 py-2 text-sm ${evaluationBanner.className}`}>
+            {evaluationBanner.text}
+          </div>
+        )}
       </div>
 
       <form className="space-y-5 p-5" onSubmit={submit}>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+          <Metric label="Итоговый балл" value={totalDisplay} />
+          <Metric label="Критерии" value={String(criteria.length)} />
+          <Metric
+            label="Самостоятельность выполнения"
+            status={integrityStatus}
+          />
+        </div>
+
         <div className="rounded-lg border border-border bg-secondary p-4">
           <p className="eyebrow">Текстовый отчёт</p>
           <p className="text-sm leading-6 text-slate-700">
             {submission.ai_draft?.summary ?? submission.review_json?.summary_feedback ?? submission.summary ?? "Сохранённая проверка доступна для редактирования."}
           </p>
-          {submission.ai_draft?.scores || structuredScores.length > 0 ? (
-            <div className="mt-4 grid gap-2">
-              {(submission.ai_draft?.scores ?? structuredScores.map((item) => ({
-                criterion: item.criterion_name,
-                score: item.assigned_score,
-                max_score: item.max_points,
-                comment: item.reasoning,
-                evidence: item.evidence,
-              }))).map((item) => (
-                <div key={item.criterion} className="flex gap-3 rounded-lg bg-white p-3 text-xs">
-                  <span className="min-w-0 flex-1">
-                    <strong>{item.criterion}</strong>
-                    <span className="mt-1 block text-muted">{item.comment}</span>
-                  </span>
-                  <span className="shrink-0 font-mono font-semibold">{item.score}/{item.max_score}</span>
-                </div>
-              ))}
-            </div>
-          ) : null}
         </div>
-
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-          <Metric label="Оценка AI" value={`${submission.ai_draft?.total ?? submission.review_json?.total_score ?? "—"}/100`} />
-          <Metric label="Критериев" value={String(submission.ai_draft?.scores.length ?? structuredScores.length ?? "—")} />
-          <Metric
-            label="AI-сигнал"
-            value={submission.ai_assessment_json ? `${Math.round(submission.ai_assessment_json.confidence * 100)}%` : submission.ai_draft ? `${Math.round(submission.ai_draft.integrity.confidence * 100)}%` : "—"}
-          />
-        </div>
-
-        {pollTimedOut && submission.evaluation_status !== "completed" && submission.evaluation_status !== "failed" && (
-          <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-danger">Не удалось дождаться результата AI-проверки за 60 секунд.</div>
-        )}
-        {submission.evaluation_status && submission.evaluation_status !== "completed" && (
-          <div className={`rounded-lg border p-3 text-sm ${submission.evaluation_status === "failed" ? "border-red-200 bg-red-50 text-danger" : "border-amber-200 bg-amber-50 text-warning"}`}>
-            {submission.evaluation_status === "failed" ? `AI-проверка завершилась ошибкой: ${submission.evaluation_error ?? "неизвестная ошибка"}` : "AI-проверка выполняется. Результаты появятся автоматически."}
-          </div>
-        )}
 
         <label className="block">
           <span className="field-label">Краткий итог проверки</span>
           <textarea rows={4} value={summary} onChange={(event) => setSummary(event.target.value)} required />
-        </label>
-        <label className="block">
-          <span className="field-label">Нарушение самостоятельности</span>
-          <textarea
-            rows={2}
-            value={integrity}
-            onChange={(event) => setIntegrity(event.target.value)}
-            placeholder={submission.ai_draft?.integrity.reason ?? "Оставьте пустым, если нарушений нет"}
-          />
         </label>
         <section>
           <div className="mb-3 flex items-center justify-between gap-3">
@@ -366,9 +350,28 @@ function ReviewEditor({
               <p className="eyebrow">Финальное решение</p>
               <h3 className="text-sm font-semibold">Оценки по критериям</h3>
             </div>
-            <span className="font-mono text-lg font-semibold">{totalScore}/100</span>
+            <span className="font-mono text-lg font-semibold">{totalDisplay}</span>
           </div>
           <div className="space-y-3">
+            {submission.ai_draft?.scores || structuredScores.length > 0 ? (
+              <div className="grid gap-2 rounded-lg border border-border bg-secondary p-3">
+                {(submission.ai_draft?.scores ?? structuredScores.map((item) => ({
+                  criterion: item.criterion_name,
+                  score: item.assigned_score,
+                  max_score: item.max_points,
+                  comment: item.reasoning,
+                  evidence: item.evidence,
+                }))).map((item) => (
+                  <div key={item.criterion} className="flex gap-3 rounded-lg bg-white p-3 text-xs">
+                    <span className="min-w-0 flex-1">
+                      <strong>{item.criterion}</strong>
+                      <span className="mt-1 block text-muted">{item.comment}</span>
+                    </span>
+                    <span className="shrink-0 font-mono font-semibold">{item.score ?? "-"}/{item.max_score ?? "-"}</span>
+                  </div>
+                ))}
+              </div>
+            ) : null}
             {criteria.map((criterion, index) => (
               <div key={`${index}-${criterion.title}`} className="rounded-lg border border-border p-3">
                 <div className="grid grid-cols-[1fr_100px] items-start gap-3">
@@ -382,15 +385,25 @@ function ReviewEditor({
                     <span className="field-label">Балл из {criterion.max_score}</span>
                     <input
                       type="number"
+                      step="any"
                       min={0}
                       max={criterion.max_score}
                       value={scores[index].score}
-                      onChange={(event) =>
+                      onChange={(event) => {
+                        setScoresEdited(true);
+                        const rawScore = event.target.value;
                         setScores((current) =>
                           current.map((item, itemIndex) =>
                             itemIndex === index
-                              ? { ...item, score: Number(event.target.value) }
+                              ? { ...item, score: rawScore === "" ? "" : Number(rawScore) }
                               : item,
+                          ),
+                        );
+                      }}
+                      onBlur={() =>
+                        setScores((current) =>
+                          current.map((item, itemIndex) =>
+                            itemIndex === index && item.score === "" ? { ...item, score: 0 } : item,
                           ),
                         )
                       }
@@ -434,16 +447,37 @@ function ReviewEditor({
           )}
           <button type="button" className="button-secondary" onClick={onCancel}>Отмена</button>
         </div>
+        <label className="block border-t border-border pt-5">
+          <span className="field-label">Нарушение самостоятельности</span>
+          <textarea
+            rows={2}
+            value={integrity}
+            onChange={(event) => setIntegrity(event.target.value)}
+            placeholder={submission.ai_draft?.integrity.reason ?? "Оставьте пустым, если нарушений нет"}
+          />
+        </label>
       </form>
     </section>
   );
 }
 
 
-function Metric({ label, value }: { label: string; value: string }) {
+function Metric({ label, value, status }: { label: string; value?: string; status?: string }) {
+  const statusClass = {
+    green: "bg-emerald-500",
+    yellow: "bg-amber-400",
+    red: "bg-red-500",
+  }[status ?? ""];
   return (
-    <div className="rounded-lg border border-border bg-white p-3 text-center">
-      <p className="font-mono text-lg font-semibold">{value}</p>
+    <div className="flex flex-col items-center justify-center rounded-lg border border-border bg-white p-3 text-center">
+      {status === undefined ? (
+        <p className="font-mono text-lg font-semibold">{value}</p>
+      ) : statusClass ? (
+        <span
+          aria-label={`Статус самостоятельности: ${status}`}
+          className={`block h-[26px] w-[26px] rounded-full ${statusClass}`}
+        />
+      ) : null}
       <p className="mt-0.5 text-[10px] text-muted">{label}</p>
     </div>
   );

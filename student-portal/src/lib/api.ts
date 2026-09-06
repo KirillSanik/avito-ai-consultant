@@ -7,7 +7,12 @@ import type {
 } from "./types";
 
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+export function apiBaseUrl() {
+  if (typeof window === "undefined") {
+    return process.env.INTERNAL_API_URL ?? process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+  }
+  return process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+}
 const STORAGE_KEY = "studentdesk.session";
 let token: string | null = null;
 
@@ -41,7 +46,7 @@ export function loadSession(): AuthResponse | null {
 
 
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${API_URL}${path}`, {
+  const response = await fetch(`${apiBaseUrl()}${path}`, {
     ...init,
     headers: {
       "Content-Type": "application/json",
@@ -57,6 +62,21 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
     throw new Error(detail || "Не удалось выполнить запрос");
   }
   return response.status === 204 ? (undefined as T) : response.json();
+}
+
+async function upload<T>(path: string, file: File): Promise<T> {
+  const form = new FormData();
+  form.append("file", file);
+  const response = await fetch(`${apiBaseUrl()}${path}`, {
+    method: "POST",
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+    body: form,
+  });
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({ detail: "Ошибка API" }));
+    throw new Error(body.detail || "Не удалось загрузить файл");
+  }
+  return response.json();
 }
 
 
@@ -98,4 +118,6 @@ export const studentHomeworkApi = {
       method: "POST",
       body: JSON.stringify({ work_url: workUrl }),
     }),
+  submitFile: (id: number, file: File) =>
+    upload<StudentSubmission>(`/api/student/assignments/${id}/submit-file`, file),
 };
